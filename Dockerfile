@@ -4,15 +4,10 @@ RUN npm install -g pnpm
 
 WORKDIR /app
 
-# Copy web project files
-COPY web/package.json web/pnpm-lock.yaml ./
-COPY web/pnpm-workspace.yaml* ./
-
-# Install deps
+# Copy and install
+COPY web/ ./web/
+WORKDIR /app/web
 RUN pnpm install --frozen-lockfile
-
-# Copy source
-COPY web/ ./
 
 # Build
 RUN pnpm build
