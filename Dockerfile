@@ -4,12 +4,14 @@ RUN npm install -g pnpm
 
 WORKDIR /app
 
-# Copy and install
+# Copy web project files
 COPY web/ ./web/
 WORKDIR /app/web
 RUN pnpm install --frozen-lockfile
 
-# Build
+# Build — needs DATABASE_URL at build time for schema validation
+ARG DATABASE_URL
+ENV DATABASE_URL=${DATABASE_URL}
 RUN pnpm build
 
 EXPOSE 3000
