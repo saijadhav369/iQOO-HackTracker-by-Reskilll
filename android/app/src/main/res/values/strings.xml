@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">HackTracker by Reskill</string>
+    <string name="accessibility_description">HackTracker by Reskill tracks tap counts and app usage during the hackathon. No personal data is captured.</string>
+    <string name="notification_channel_name">HackTracker Tracking</string>
+    <string name="notification_channel_description">Shows when HackTracker is actively tracking device usage</string>
+</resources>

@@ -1,0 +1,12 @@
+node_modules/
+.next/
+.env.local
+*.apk
+.gradle/
+build/
+local.properties
+/tmp/
+web/drizzle/
+android/app/build/
+android/.gradle/
+android/gradle/wrapper/gradle-wrapper.jar
