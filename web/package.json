@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.0.2",
+    "@reduxjs/toolkit": "^2.11.2",
     "drizzle-orm": "^0.45.2",
     "jose": "^6.2.2",
     "next": "16.2.3",
