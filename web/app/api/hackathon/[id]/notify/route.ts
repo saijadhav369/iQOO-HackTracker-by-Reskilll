@@ -5,6 +5,8 @@ import { getSession } from "@/lib/auth/jwt";
 import { eq, desc } from "drizzle-orm";
 import { z } from "zod/v4";
 
+export const dynamic = "force-dynamic";
+
 const notifySchema = z.object({
   title: z.string().min(1),
   message: z.string().min(1),
