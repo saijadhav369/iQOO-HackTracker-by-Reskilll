@@ -1,0 +1,8 @@
+android/
+.git/
+node_modules/
+web/node_modules/
+web/.next/
+*.apk
+plan.md
+SETUP-GUIDE.md
