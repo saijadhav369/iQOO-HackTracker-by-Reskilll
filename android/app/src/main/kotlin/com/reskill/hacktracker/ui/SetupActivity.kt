@@ -1,22 +1,31 @@
 package com.reskill.hacktracker.ui
 
+import android.Manifest
 import android.app.admin.DevicePolicyManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.view.View
 import android.widget.Button
 import android.widget.EditText
 import android.widget.TextView
 import android.widget.Toast
+import android.app.Activity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.work.*
 import com.reskill.hacktracker.R
 import com.reskill.hacktracker.receivers.HackTrackerAdminReceiver
 import com.reskill.hacktracker.services.DataSyncWorker
 import com.reskill.hacktracker.services.HackTrackerAccessibilityService
+import com.reskill.hacktracker.services.MediaProjectionHolder
+import com.reskill.hacktracker.services.ScreenshotCaptor
 import com.reskill.hacktracker.services.TrackingForegroundService
 import com.reskill.hacktracker.util.PasscodeManager
 import com.reskill.hacktracker.util.SessionManager
@@ -47,6 +56,54 @@ class SetupActivity : AppCompatActivity() {
         ActivityResultContracts.StartActivityForResult()
     ) {
         updateUI()
+    }
+
+    // POST_NOTIFICATIONS (Android 13+) must be granted at runtime or the system
+    // silently drops every notify() call — including organiser blast pushes. The
+    // foreground-service notification is exempt, which is why tracking still
+    // "works" while broadcasts never reach the phone.
+    private val notificationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (!granted) {
+            Toast.makeText(
+                this,
+                "Notifications are off — organiser alerts won't show. Enable them in Settings.",
+                Toast.LENGTH_LONG
+            ).show()
+        }
+    }
+
+    private val mediaProjectionLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+            MediaProjectionHolder.setToken(result.resultCode, result.data)
+            Toast.makeText(this, "Screen capture authorised", Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(this, "Screen capture not granted", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun isDeviceOwner(): Boolean {
+        val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as? android.app.admin.DevicePolicyManager
+            ?: return false
+        return dpm.isDeviceOwnerApp(packageName)
+    }
+
+    private fun maybeRequestNotificationPermission() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        val granted = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.POST_NOTIFICATIONS
+        ) == PackageManager.PERMISSION_GRANTED
+        if (!granted) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
+    private fun requestMediaProjectionConsent() {
+        val intent = ScreenshotCaptor.createScreenCaptureIntent(this) ?: return
+        mediaProjectionLauncher.launch(intent)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -93,14 +150,73 @@ class SetupActivity : AppCompatActivity() {
         teamNameInput.setText(session.teamName)
         deviceIdText.text = "Device ID: ${session.deviceId}"
 
+        // Ask for POST_NOTIFICATIONS up front — without it, Android 13+ drops
+        // organiser blast pushes (and the heads-up chime) on the floor.
+        maybeRequestNotificationPermission()
+
+        // Ask once for SYSTEM_ALERT_WINDOW so the red-light overlay can render.
+        if (!Settings.canDrawOverlays(this)) {
+            try {
+                startActivity(
+                    Intent(
+                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        Uri.parse("package:$packageName")
+                    )
+                )
+            } catch (_: Exception) {}
+        }
+
+        // Screen capture fallback: device-owner uses Accessibility.takeScreenshot
+        // and needs no prompt. Non-DO devices need a one-time MediaProjection
+        // grant — re-asked if the process restarts (Android token cannot persist).
+        if (!isDeviceOwner() && !MediaProjectionHolder.hasToken()) {
+            try { requestMediaProjectionConsent() } catch (_: Exception) {}
+        }
+
         updateUI()
 
         saveButton.setOnClickListener { saveAndStart() }
         stopButton.setOnClickListener { stopTracking() }
+
+        // Headless provisioning: configure + start from intent extras so a phone
+        // can be set up by an ADB script or QR device-owner admin-extras bundle
+        // without any manual typing. Example:
+        //   am start -n com.reskill.hacktracker/.ui.SetupActivity \
+        //     --es cfg_api_url https://host/api --es cfg_hackathon_id iqoo_2026 \
+        //     --es cfg_team_id team_01 --es cfg_team_name "CodeCrafters" \
+        //     --es cfg_passcode 123456
+        maybeConfigureFromExtras()
+    }
+
+    /**
+     * If the launching intent carries cfg_* extras AND the device isn't already
+     * tracking, populate the fields and kick off saveAndStart() — the same path
+     * the Save button uses. No-op on a normal launcher tap (no extras) or when
+     * already configured, so it's safe to re-fire.
+     */
+    private fun maybeConfigureFromExtras() {
+        if (session.isTracking) return
+        val apiUrl = intent?.getStringExtra("cfg_api_url") ?: return
+        val hackathonId = intent?.getStringExtra("cfg_hackathon_id") ?: return
+        val teamId = intent?.getStringExtra("cfg_team_id") ?: return
+        val teamName = intent?.getStringExtra("cfg_team_name") ?: return
+        val passcode = intent?.getStringExtra("cfg_passcode")
+        apiUrlInput.setText(apiUrl)
+        hackathonIdInput.setText(hackathonId)
+        teamIdInput.setText(teamId)
+        teamNameInput.setText(teamName)
+        if (!passcode.isNullOrBlank()) passcodeSetInput.setText(passcode)
+        saveAndStart()
     }
 
     override fun onResume() {
         super.onResume()
+        // If the AccessibilityService isn't grabbing screenshots (non-DO install
+        // or any failure mode), MediaProjection.onStop clears the consent —
+        // re-prompt here so the next organiser request just works.
+        if (!isDeviceOwner() && !MediaProjectionHolder.hasToken()) {
+            try { requestMediaProjectionConsent() } catch (_: Exception) {}
+        }
         statusUpdateJob = CoroutineScope(Dispatchers.Main).launch {
             while (isActive) {
                 updateUI()
@@ -249,6 +365,11 @@ class SetupActivity : AppCompatActivity() {
     }
 
     private fun stopTracking() {
+        // Mark this as a clean exit so the next process start (or the server
+        // status calc) doesn't classify it as a crash. Passcode-authorised
+        // stop is the ONLY runtime path that flips clean_exit=true; everything
+        // else relies on ShutdownReceiver catching a system broadcast.
+        session.cleanExit = true
         session.isTracking = false
         stopService(Intent(this, TrackingForegroundService::class.java))
         WorkManager.getInstance(this).cancelUniqueWork("hacktracker_sync")

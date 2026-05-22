@@ -9,11 +9,14 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1051.0",
     "@neondatabase/serverless": "^1.0.2",
     "@reduxjs/toolkit": "^2.11.2",
     "drizzle-orm": "^0.45.2",
+    "exceljs": "^4.4.0",
     "jose": "^6.2.2",
     "next": "16.2.3",
+    "pdfkit": "^0.18.0",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "recharts": "^3.8.1",
@@ -22,6 +25,7 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
+    "@types/pdfkit": "^0.17.6",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "drizzle-kit": "^0.31.10",
