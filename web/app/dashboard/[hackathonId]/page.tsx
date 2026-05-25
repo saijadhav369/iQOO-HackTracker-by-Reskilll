@@ -6,6 +6,7 @@ import LiveGrid from "@/components/live-grid";
 import LightToggle from "@/components/light-toggle";
 import NotifyModal from "@/components/notify-modal";
 import AlertTray, { OrganiserAlert } from "@/components/alert-tray";
+import ExportButton from "@/components/export-button";
 
 const ALERT_POLL_MS = 5_000;
 // Polling-cron: Railway doesn't give us cron, so the dashboard pings the idle
@@ -114,6 +115,13 @@ export default function DashboardPage() {
             >
               Manage
             </a>
+            <a
+              href={`/dashboard/${hackathonId}/registrations`}
+              className="px-4 py-2 text-xs font-black uppercase tracking-widest rounded-lg border border-black/10 dark:border-white/10 hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black transition active:scale-95"
+            >
+              Registrations
+            </a>
+            <ExportButton scope="hackathon" hackathonId={hackathonId} />
           </div>
         </div>
       </header>

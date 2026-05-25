@@ -15,6 +15,10 @@
     <!-- Feature 9 — expanded vitals: network transport + Wi-Fi signal reads. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <!-- Registration capture: try to read IMEI on device-owner installs. Read
+         is wrapped in try/catch so the capture still works (with imei=null)
+         when this permission isn't granted or the call is blocked. -->
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
 
     <application
         android:name=".HackTrackerApp"
@@ -41,6 +45,33 @@
             android:exported="false"
             android:excludeFromRecents="true"
             android:launchMode="singleTask" />
+
+        <!-- Registration-capture screen with its own launcher icon ("Register").
+             Admin-passcode gated inside the activity; participants without the
+             passcode cannot capture a photo. -->
+        <activity
+            android:name=".ui.RegistrationCaptureActivity"
+            android:label="@string/registration_app_label"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTask">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- FileProvider for the system camera Intent's EXTRA_OUTPUT URI.
+             Narrow paths config: only cache/face_photos/ is exposed. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_provider_paths" />
+        </provider>
 
         <!-- Accessibility Service -->
         <service

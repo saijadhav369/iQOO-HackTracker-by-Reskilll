@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Paths exposed through androidx.core.content.FileProvider so the system camera
+  app can write directly into our cache dir under face_photos/. Kept narrow on
+  purpose: only the registration-capture temp dir is exposed.
+-->
+<paths>
+    <cache-path name="face_photos" path="face_photos/" />
+</paths>

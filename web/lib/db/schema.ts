@@ -327,3 +327,35 @@ export const crashLogs = pgTable(
     index("idx_crash_logs_hackathon").on(table.hackathonId, table.occurredAt),
   ]
 );
+
+// Registration face photos captured from the Android "Register" launcher.
+// Each capture is one row -- the same imei may appear arbitrarily many times.
+// imei is nullable: non-device-owner installs can't read it, but we still
+// persist the photo + team mapping so it's not lost.
+export const facePhotos = pgTable(
+  "face_photos",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    teamId: text("team_id")
+      .references(() => teams.id)
+      .notNull(),
+    hackathonId: text("hackathon_id")
+      .references(() => hackathons.id)
+      .notNull(),
+    deviceId: text("device_id"),
+    imei: text("imei"),
+    // Populated after the S3 PUT succeeds. Null = upload in-flight or rolled
+    // back; the list endpoint filters those out.
+    imageUrl: text("image_url"),
+    capturedAt: timestamp("captured_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [
+    index("idx_face_photos_hackathon").on(table.hackathonId, table.capturedAt),
+    index("idx_face_photos_team").on(table.teamId, table.capturedAt),
+  ]
+);

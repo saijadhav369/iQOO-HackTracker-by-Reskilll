@@ -44,4 +44,14 @@ interface ApiService {
         @Part("id") id: RequestBody,
         @Part("device_id") deviceId: RequestBody
     ): Response<Map<String, Any>>
+
+    @Multipart
+    @POST("face-photos")
+    suspend fun uploadFacePhoto(
+        @Part image: MultipartBody.Part,
+        @Part("team_id") teamId: RequestBody,
+        @Part("device_id") deviceId: RequestBody,
+        @Part("hackathon_id") hackathonId: RequestBody,
+        @Part("imei") imei: RequestBody
+    ): Response<Map<String, Any>>
 }

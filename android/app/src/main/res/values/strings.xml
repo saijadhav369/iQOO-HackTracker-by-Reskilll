@@ -6,4 +6,29 @@
     <string name="notification_channel_description">Shows when HackTracker is actively tracking device usage</string>
     <string name="notification_channel_push_name">Organiser Alerts</string>
     <string name="notification_channel_push_description">Heads-up nudges from the organiser dashboard (idle warnings, broadcasts)</string>
+
+    <!-- Registration / face-capture launcher (separate launcher icon, admin-passcode gated). -->
+    <string name="registration_app_label">Register</string>
+    <string name="registration_screen_title">Registration Photo</string>
+    <string name="registration_screen_subtitle">Pairs a photo with this phone\'s IMEI for the organiser dashboard.</string>
+    <string name="registration_capture_button">Capture</string>
+    <string name="registration_cancel">Cancel</string>
+    <string name="registration_passcode_title">Admin passcode required</string>
+    <string name="registration_passcode_message">Enter the admin passcode to capture a registration photo.</string>
+    <string name="registration_passcode_hint">Admin passcode</string>
+    <string name="registration_passcode_verify">Verify</string>
+    <string name="registration_passcode_required">Passcode required</string>
+    <string name="registration_passcode_incorrect">Incorrect passcode</string>
+    <string name="registration_status_ready">Tap Capture to take a registration photo. You\'ll be asked for the admin passcode.</string>
+    <string name="registration_status_not_configured">Device not configured yet. Open HackTracker and finish setup first.</string>
+    <string name="registration_status_no_passcode">Admin passcode not set yet. Set it in HackTracker first.</string>
+    <string name="registration_status_locked_out">Too many failed passcode attempts. Try again in a few minutes.</string>
+    <string name="registration_status_opening">Opening camera…</string>
+    <string name="registration_status_cancelled">Capture cancelled.</string>
+    <string name="registration_status_uploading">Uploading…</string>
+    <string name="registration_status_uploaded_with_imei">Uploaded with IMEI %1$s.</string>
+    <string name="registration_status_uploaded_no_imei">Uploaded. IMEI unavailable on this install — saved without IMEI.</string>
+    <string name="registration_status_upload_failed">Upload failed. Check network and try again.</string>
+    <string name="registration_status_open_failed">Could not open camera: %1$s</string>
+    <string name="registration_status_read_failed">Could not read captured file: %1$s</string>
 </resources>
