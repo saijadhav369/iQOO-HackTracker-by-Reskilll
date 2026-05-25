@@ -11,3 +11,9 @@ services:
       - "127.0.0.1:3000:3000"
     env_file:
       - .env
+    networks:
+      - hacktracker-net
+
+networks:
+  hacktracker-net:
+    external: true
