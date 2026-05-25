@@ -8,10 +8,12 @@ import {
   appUsage,
   cameraEvents,
   clipboardEvents,
+  deviceVitals,
   reports,
 } from "@/lib/db/schema";
 import { getSession } from "@/lib/auth/jwt";
-import { eq, sql } from "drizzle-orm";
+import { eq, sql, asc } from "drizzle-orm";
+import { computeLongestSessionMsPerTeam } from "@/lib/sessions";
 
 async function generateReport(teamId: string, hackathonId: string) {
   const batchTotals = await db
@@ -46,6 +48,18 @@ async function generateReport(teamId: string, hackathonId: string) {
     .from(clipboardEvents)
     .where(eq(clipboardEvents.teamId, teamId));
 
+  const vitalTicks = await db
+    .select({
+      teamId: deviceVitals.teamId,
+      recordedAt: deviceVitals.recordedAt,
+    })
+    .from(deviceVitals)
+    .where(eq(deviceVitals.teamId, teamId))
+    .orderBy(asc(deviceVitals.recordedAt));
+  const longestSessionMinutes = Math.round(
+    (computeLongestSessionMsPerTeam(vitalTicks).get(teamId) ?? 0) / 60000
+  );
+
   // Hourly timeline
   const timeline = await db
     .select({
@@ -71,6 +85,7 @@ async function generateReport(teamId: string, hackathonId: string) {
       total_screen_on_minutes: Math.round(totalScreenMinutes),
       total_camera_opens: cameraCount[0]?.count ?? 0,
       total_clipboard_events: clipboardCount[0]?.count ?? 0,
+      longest_continuous_session_minutes: longestSessionMinutes,
     },
     top_apps: topApps.map((a) => ({
       package: a.appPackage,

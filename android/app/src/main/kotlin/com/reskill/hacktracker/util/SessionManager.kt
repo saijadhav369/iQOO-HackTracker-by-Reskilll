@@ -41,6 +41,56 @@ class SessionManager(context: Context) {
         get() = prefs.getLong("last_notification_id", 0)
         set(value) = prefs.edit().putLong("last_notification_id", value).apply()
 
+    /** Venue signal received from the server — "green" or "red". Default green. */
+    var currentLight: String
+        get() = prefs.getString("current_light", Constants.LIGHT_GREEN) ?: Constants.LIGHT_GREEN
+        set(value) = prefs.edit().putString("current_light", value).apply()
+
+    /** Start of the currently-open screen-on session in epoch millis, or null if no session. */
+    var currentSessionStart: Long?
+        get() {
+            val v = prefs.getLong("current_session_start", 0L)
+            return if (v > 0L) v else null
+        }
+        set(value) {
+            if (value == null) prefs.edit().remove("current_session_start").apply()
+            else prefs.edit().putLong("current_session_start", value).apply()
+        }
+
+    /**
+     * Set to true on graceful shutdown signals (passcode-authorised stop, ACTION_SHUTDOWN,
+     * ACTION_REBOOT, ACTION_BATTERY_LOW). Set to false when the foreground service starts
+     * a new run. Reads as `false` if the process died without flipping the flag — that's
+     * how the server distinguishes a crash from a clean offline.
+     */
+    var cleanExit: Boolean
+        get() = prefs.getBoolean("clean_exit", true)
+        set(value) = prefs.edit().putBoolean("clean_exit", value).apply()
+
+    /** Epoch millis of the last successful heartbeat send. 0 if never. */
+    var lastHeartbeatSentAt: Long
+        get() = prefs.getLong("last_heartbeat_sent_at", 0L)
+        set(value) = prefs.edit().putLong("last_heartbeat_sent_at", value).apply()
+
+    /** Foreground app package at the time of the last accessibility event, or null. */
+    var lastForegroundApp: String?
+        get() = prefs.getString("last_foreground_app", null)
+        set(value) {
+            if (value == null) prefs.edit().remove("last_foreground_app").apply()
+            else prefs.edit().putString("last_foreground_app", value).apply()
+        }
+
+    /**
+     * Set true by [com.reskill.hacktracker.HackTrackerApp] whenever the process
+     * starts while the device is booted into Safe Mode (third-party services,
+     * including ours, are disabled there). PasscodeActivity refuses to unlock
+     * while this is set; a normal reboot clears it (onCreate sets it to the live
+     * PackageManager.isSafeMode reading).
+     */
+    var bootSafeMode: Boolean
+        get() = prefs.getBoolean("boot_safe_mode", false)
+        set(value) = prefs.edit().putBoolean("boot_safe_mode", value).apply()
+
     val isConfigured: Boolean
         get() = hackathonId.isNotBlank() && teamId.isNotBlank() && apiUrl.isNotBlank()
 }

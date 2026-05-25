@@ -2,14 +2,18 @@ package com.reskill.hacktracker.services
 
 import android.accessibilityservice.AccessibilityService
 import android.content.Intent
+import android.os.Build
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
 import com.reskill.hacktracker.data.repository.TrackingRepository
 import com.reskill.hacktracker.ui.PasscodeActivity
+import com.reskill.hacktracker.util.Constants
 import com.reskill.hacktracker.util.SessionManager
 import kotlinx.coroutines.*
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 class HackTrackerAccessibilityService : AccessibilityService() {
 
@@ -27,6 +31,20 @@ class HackTrackerAccessibilityService : AccessibilityService() {
     private val perAppTaps = ConcurrentHashMap<String, AtomicInteger>()
     private val perAppScrolls = ConcurrentHashMap<String, AtomicInteger>()
     private val perAppTextInputs = ConcurrentHashMap<String, AtomicInteger>()
+
+    // Cumulative ms the IME window has been open during this batch period.
+    private val keyboardActiveMs = AtomicLong(0L)
+
+    // Timestamp when the IME window opened. 0L means closed.
+    @Volatile
+    private var imeOpenSince: Long = 0L
+
+    // Cumulative ms the iQOO Office Kit window has been foregrounded this period.
+    private val officeKitActiveMs = AtomicLong(0L)
+
+    // Timestamp when the Office Kit window came to front. 0L means not in front.
+    @Volatile
+    private var officeKitWindowSince: Long = 0L
 
     @Volatile
     private var currentForegroundApp: String? = null
@@ -98,13 +116,41 @@ class HackTrackerAccessibilityService : AccessibilityService() {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
                 val className = event.className?.toString() ?: ""
 
+                // IME open/close tracking. Any "inputmethod" package showing means
+                // the keyboard window is up. The next non-IME window state change
+                // closes the window and flushes elapsed time into the counter.
+                // System UI transitions (notifications shade, etc.) are ignored
+                // so they don't terminate an active typing window.
+                val isIme = packageName.contains("inputmethod", ignoreCase = true)
+                val isSystemUi = packageName == "com.android.systemui"
+                val now = System.currentTimeMillis()
+                if (isIme) {
+                    if (imeOpenSince == 0L) imeOpenSince = now
+                } else if (!isSystemUi && imeOpenSince > 0L) {
+                    keyboardActiveMs.addAndGet(now - imeOpenSince)
+                    imeOpenSince = 0L
+                }
+
+                // Office Kit dwell tracking — same open/close pattern as the IME.
+                // Transient IME / SystemUI windows don't end an Office Kit session.
+                val isOfficeKit = !isIme && !isSystemUi &&
+                    Constants.OFFICE_KIT_CLASS_PATTERNS.any {
+                        className.contains(it, ignoreCase = true)
+                    }
+                if (isOfficeKit) {
+                    if (officeKitWindowSince == 0L) officeKitWindowSince = now
+                } else if (!isIme && !isSystemUi && officeKitWindowSince > 0L) {
+                    officeKitActiveMs.addAndGet(now - officeKitWindowSince)
+                    officeKitWindowSince = 0L
+                }
+
                 // Detect app switch — ignore keyboards and system UI
-                val isIgnored = packageName.contains("inputmethod", ignoreCase = true) ||
-                    packageName == "com.android.systemui"
+                val isIgnored = isIme || isSystemUi
 
                 if (!isIgnored && packageName != currentForegroundApp) {
                     lastForegroundApp = currentForegroundApp
                     currentForegroundApp = packageName
+                    session.lastForegroundApp = packageName
                     if (lastForegroundApp != null) {
                         appSwitchCount.incrementAndGet()
                     }
@@ -128,7 +174,7 @@ class HackTrackerAccessibilityService : AccessibilityService() {
                     packageName == "com.android.settings"
                 ) {
                     val lowerClass = className.lowercase()
-                    val isDangerous = lowerClass.contains("accessibility") ||
+                    val classMatch = lowerClass.contains("accessibility") ||
                         lowerClass.contains("subsettings") ||
                         lowerClass.contains("usageaccess") ||
                         lowerClass.contains("specialaccess") ||
@@ -140,9 +186,28 @@ class HackTrackerAccessibilityService : AccessibilityService() {
                         lowerClass.contains("manageapplication") ||
                         lowerClass.contains("notificationaccess")
 
-                    if (isDangerous) {
-                        Log.w("HackTracker", "BLOCKED! className=$className")
+                    // Heading-text fallback catches OEM-renamed (OriginOS)
+                    // activities whose className no longer contains the keywords
+                    // above — match the visible page heading instead.
+                    val heading = if (!classMatch) findSettingsHeading(event.source) else null
+                    val headingMatch = heading != null &&
+                        Constants.SETTINGS_HEADING_REGEX.containsMatchIn(heading)
+
+                    if (classMatch || headingMatch) {
+                        Log.w("HackTracker", "BLOCKED! className=$className heading=$heading")
                         showPasscodeChallenge()
+                        scope.launch {
+                            try {
+                                repository.logTamperEvent(
+                                    Constants.TAMPER_SETTINGS_PAGE,
+                                    mapOf(
+                                        "className" to className,
+                                        "heading" to heading,
+                                        "matchedBy" to if (classMatch) "class" else "heading"
+                                    )
+                                )
+                            } catch (_: Exception) {}
+                        }
                     }
                 }
             }
@@ -167,6 +232,25 @@ class HackTrackerAccessibilityService : AccessibilityService() {
         val longPresses = longPressCount.getAndSet(0)
         val notifications = notificationCount.getAndSet(0)
 
+        // Keyboard active time: snapshot accumulated ms + any ongoing IME-open
+        // delta. If IME is still open across the flush boundary, restart its
+        // stamp at `now` so the next period continues counting cleanly.
+        var keyboardMs = keyboardActiveMs.getAndSet(0L)
+        if (imeOpenSince > 0L) {
+            keyboardMs += (now - imeOpenSince)
+            imeOpenSince = now
+        }
+        val keyboardSeconds = (keyboardMs / 1000L).toInt()
+
+        // Office Kit dwell: same snapshot logic. If still in the Office Kit
+        // window across the flush boundary, restart its stamp at `now`.
+        var officeKitMs = officeKitActiveMs.getAndSet(0L)
+        if (officeKitWindowSince > 0L) {
+            officeKitMs += (now - officeKitWindowSince)
+            officeKitWindowSince = now
+        }
+        val officeKitSeconds = (officeKitMs / 1000L).toInt()
+
         // Copy and clear per-app maps
         val appTaps = HashMap<String, Int>()
         for ((key, value) in perAppTaps) {
@@ -188,7 +272,7 @@ class HackTrackerAccessibilityService : AccessibilityService() {
         periodStartTime = now
 
         // Only save if there was any activity
-        if (taps > 0 || texts > 0 || scrolls > 0 || switches > 0 || notifications > 0) {
+        if (taps > 0 || texts > 0 || scrolls > 0 || switches > 0 || notifications > 0 || keyboardSeconds > 0 || officeKitSeconds > 0) {
             repository.saveEventBatch(
                 taps = taps,
                 textInputs = texts,
@@ -196,6 +280,8 @@ class HackTrackerAccessibilityService : AccessibilityService() {
                 appSwitches = switches,
                 longPresses = longPresses,
                 notifications = notifications,
+                keyboardActiveSeconds = keyboardSeconds,
+                officeKitSeconds = officeKitSeconds,
                 perAppTaps = appTaps,
                 perAppScrolls = appScrolls,
                 perAppTextInputs = appTexts,
@@ -204,6 +290,35 @@ class HackTrackerAccessibilityService : AccessibilityService() {
                 periodEnd = now
             )
         }
+    }
+
+    /**
+     * Find the page heading of the current Settings screen by walking the node
+     * tree (BFS, capped). Prefers an explicit heading node (API 28+); falls back
+     * to the longest text label near the top of the window. Used to recognise
+     * dangerous pages whose className was renamed by the OEM ROM.
+     */
+    private fun findSettingsHeading(source: AccessibilityNodeInfo?): String? {
+        val root = source ?: rootInActiveWindow ?: return null
+        var headingText: String? = null
+        var longest: String? = null
+        val queue = ArrayDeque<AccessibilityNodeInfo>()
+        queue.add(root)
+        var visited = 0
+        while (queue.isNotEmpty() && visited < Constants.HEADING_SCAN_NODE_LIMIT) {
+            val node = queue.removeFirst()
+            visited++
+            val text = node.text?.toString()?.trim()
+            if (!text.isNullOrEmpty()) {
+                val isHeadingNode = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && node.isHeading
+                if (isHeadingNode && headingText == null) headingText = text
+                if (longest == null || text.length > longest!!.length) longest = text
+            }
+            for (i in 0 until node.childCount) {
+                node.getChild(i)?.let { queue.add(it) }
+            }
+        }
+        return headingText ?: longest
     }
 
     private fun showPasscodeChallenge() {

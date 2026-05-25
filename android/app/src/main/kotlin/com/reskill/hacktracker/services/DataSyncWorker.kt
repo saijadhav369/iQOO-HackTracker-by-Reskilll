@@ -15,6 +15,7 @@ class DataSyncWorker(
             val repository = TrackingRepository(applicationContext)
             repository.syncEventBatches()
             repository.syncAppUsage()
+            repository.syncCrashLogs()
             Result.success()
         } catch (_: Exception) {
             Result.retry()

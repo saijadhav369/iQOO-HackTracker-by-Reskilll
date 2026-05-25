@@ -5,20 +5,29 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission
         android:name="android.permission.PACKAGE_USAGE_STATS"
         tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- Feature 9 — expanded vitals: network transport + Wi-Fi signal reads. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <!-- Registration capture: try to read IMEI on device-owner installs. Read
+         is wrapped in try/catch so the capture still works (with imei=null)
+         when this permission isn't granted or the call is blocked. -->
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
 
     <application
         android:name=".HackTrackerApp"
         android:allowBackup="false"
         android:usesCleartextTraffic="true"
-        android:icon="@android:drawable/ic_menu_compass"
+        android:icon="@drawable/logo"
         android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Material3.DayNight.NoActionBar"
+        android:theme="@style/Theme.HackTracker"
         tools:targetApi="35">
 
         <!-- Main entry (Setup screen) -->
@@ -37,6 +46,33 @@
             android:excludeFromRecents="true"
             android:launchMode="singleTask" />
 
+        <!-- Registration-capture screen with its own launcher icon ("Register").
+             Admin-passcode gated inside the activity; participants without the
+             passcode cannot capture a photo. -->
+        <activity
+            android:name=".ui.RegistrationCaptureActivity"
+            android:label="@string/registration_app_label"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTask">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- FileProvider for the system camera Intent's EXTRA_OUTPUT URI.
+             Narrow paths config: only cache/face_photos/ is exposed. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_provider_paths" />
+        </provider>
+
         <!-- Accessibility Service -->
         <service
             android:name=".services.HackTrackerAccessibilityService"
@@ -50,10 +86,12 @@
                 android:resource="@xml/accessibility_config" />
         </service>
 
-        <!-- Foreground Tracking Service -->
+        <!-- Foreground Tracking Service: specialUse for heartbeats/aggregates;
+             mediaProjection is conditionally activated for non-device-owner
+             devices that fall back to MediaProjection screenshot capture. -->
         <service
             android:name=".services.TrackingForegroundService"
-            android:foregroundServiceType="specialUse"
+            android:foregroundServiceType="specialUse|mediaProjection"
             android:exported="false">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"

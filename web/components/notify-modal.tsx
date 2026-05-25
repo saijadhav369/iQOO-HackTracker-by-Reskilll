@@ -16,7 +16,7 @@ export default function NotifyModal({ hackathonId, onClose }: NotifyModalProps) 
   const [status, setStatus] = useState("");
   const [sending, setSending] = useState(false);
 
-  const inputClass = "w-full rounded-lg border-2 border-black dark:border-white bg-transparent px-3 py-2.5 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-black dark:focus:ring-white";
+  const inputClass = "w-full rounded-xl border border-black/5 dark:border-white/10 bg-black/5 dark:bg-white/5 px-4 py-3 text-sm font-black focus:outline-none focus:ring-2 focus:ring-primary transition-all placeholder:opacity-30";
 
   async function handleSend(e: FormEvent) {
     e.preventDefault();
@@ -48,52 +48,60 @@ export default function NotifyModal({ hackathonId, onClose }: NotifyModalProps) 
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="bg-white dark:bg-black rounded-2xl border-2 border-black dark:border-white shadow-xl w-full max-w-lg p-6">
-        <div className="flex items-center justify-between mb-5">
-          <h2 className="text-lg font-black uppercase tracking-tight">Send Notification</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-black dark:hover:text-white text-2xl font-bold leading-none">&times;</button>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4 animate-in fade-in duration-300" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="bg-white dark:bg-[#0a0a0a] rounded-3xl border border-black/5 dark:border-white/5 shadow-2xl w-full max-w-lg p-8 animate-in zoom-in-95 duration-300">
+        <div className="flex items-center justify-between mb-8">
+          <h2 className="text-xs font-black uppercase tracking-[0.2em] text-gray-400">Blast Notification</h2>
+          <button onClick={onClose} className="h-8 w-8 rounded-full flex items-center justify-center bg-black/5 dark:bg-white/5 hover:bg-red-500 hover:text-white transition-all text-xl font-bold leading-none">&times;</button>
         </div>
 
-        <form onSubmit={handleSend} className="space-y-4">
-          <div>
-            <label className="block text-xs font-bold uppercase tracking-wider mb-1">Title</label>
-            <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Keep going!" required className={inputClass} />
-          </div>
-
-          <div>
-            <label className="block text-xs font-bold uppercase tracking-wider mb-1">Message</label>
-            <textarea value={message} onChange={(e) => setMessage(e.target.value)} placeholder="e.g. 30 minutes left!" required rows={3} className={inputClass} />
-          </div>
-
-          <div>
-            <label className="block text-xs font-bold uppercase tracking-wider mb-1">Send to</label>
-            <select value={filter} onChange={(e) => setFilter(e.target.value)} className={inputClass}>
-              <option value="all">All devices</option>
-              <option value="active">Active devices only</option>
-              <option value="idle">Idle devices only</option>
-              <option value="low_taps">Low taps (below threshold)</option>
-              <option value="high_taps">High taps (above threshold)</option>
-            </select>
-          </div>
-
-          {filter === "low_taps" && (
+        <form onSubmit={handleSend} className="space-y-6">
+          <div className="space-y-4">
             <div>
-              <label className="block text-xs font-bold uppercase tracking-wider mb-1">Max taps threshold</label>
-              <input type="number" value={maxTaps} onChange={(e) => setMaxTaps(e.target.value)} placeholder="e.g. 50" className={inputClass} />
+              <label className="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-2">Subject</label>
+              <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Energy Check!" required className={inputClass} />
             </div>
-          )}
-          {filter === "high_taps" && (
+
             <div>
-              <label className="block text-xs font-bold uppercase tracking-wider mb-1">Min taps threshold</label>
-              <input type="number" value={minTaps} onChange={(e) => setMinTaps(e.target.value)} placeholder="e.g. 500" className={inputClass} />
+              <label className="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-2">Message Body</label>
+              <textarea value={message} onChange={(e) => setMessage(e.target.value)} placeholder="e.g. Refuel stations are open." required rows={3} className={inputClass} />
             </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-2">Target Audience</label>
+                <select value={filter} onChange={(e) => setFilter(e.target.value)} className={`${inputClass} appearance-none cursor-pointer`}>
+                  <option value="all">All Devices</option>
+                  <option value="active">Active Only</option>
+                  <option value="idle">Idle Only</option>
+                  <option value="low_taps">Low Taps</option>
+                  <option value="high_taps">High Taps</option>
+                </select>
+              </div>
+
+              {filter === "low_taps" && (
+                <div>
+                  <label className="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-2">Max Taps</label>
+                  <input type="number" value={maxTaps} onChange={(e) => setMaxTaps(e.target.value)} placeholder="50" className={inputClass} />
+                </div>
+              )}
+              {filter === "high_taps" && (
+                <div>
+                  <label className="block text-[10px] font-black uppercase tracking-widest text-gray-400 mb-2">Min Taps</label>
+                  <input type="number" value={minTaps} onChange={(e) => setMinTaps(e.target.value)} placeholder="500" className={inputClass} />
+                </div>
+              )}
+            </div>
+          </div>
+
+          {status && (
+            <p className={`text-[10px] font-black uppercase tracking-widest text-center p-3 rounded-xl ${status === "Sent!" ? "text-green-500 bg-green-500/10" : "text-red-500 bg-red-500/10"}`}>
+              {status}
+            </p>
           )}
 
-          {status && <p className={`text-sm font-bold ${status === "Sent!" ? "text-green-600" : "text-red-500"}`}>{status}</p>}
-
-          <button type="submit" disabled={sending} className="w-full rounded-lg bg-black dark:bg-white text-white dark:text-black py-3 text-sm font-black uppercase tracking-wider hover:opacity-80 transition disabled:opacity-50">
-            {sending ? "Sending..." : "Send Notification"}
+          <button type="submit" disabled={sending} className="w-full rounded-2xl bg-primary text-black py-4 text-xs font-black uppercase tracking-[0.2em] hover:brightness-110 shadow-lg shadow-primary/20 transition-all disabled:opacity-50 active:scale-[0.98]">
+            {sending ? "Transmitting..." : "Send Broadcast"}
           </button>
         </form>
       </div>

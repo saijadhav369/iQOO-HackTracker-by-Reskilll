@@ -19,6 +19,8 @@ export async function GET(
         textInputs: eventBatches.textInputs,
         scrolls: eventBatches.scrolls,
         appSwitches: eventBatches.appSwitches,
+        keyboardActiveSeconds: eventBatches.keyboardActiveSeconds,
+        officeKitSeconds: eventBatches.officeKitSeconds,
         foregroundApp: eventBatches.foregroundApp,
         perAppTaps: eventBatches.perAppTaps,
       })

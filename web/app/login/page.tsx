@@ -3,10 +3,11 @@
 import { useState, FormEvent } from "react";
 import { useRouter } from "next/navigation";
 
+import Image from "next/image";
+
 export default function LoginPage() {
   const router = useRouter();
   const [mode, setMode] = useState<"login" | "create">("login");
-
   const [hackathonId, setHackathonId] = useState("");
   const [passcode, setPasscode] = useState("");
   const [error, setError] = useState("");
@@ -76,78 +77,87 @@ export default function LoginPage() {
     }
   }
 
-  const inputClass = "w-full rounded-lg border-2 border-black dark:border-white bg-transparent px-3 py-2.5 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-black dark:focus:ring-white";
+  const inputClass = "w-full rounded-xl border-2 border-black/10 dark:border-white/10 bg-black/5 dark:bg-white/5 px-4 py-3 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all placeholder:text-gray-400";
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-white dark:bg-black px-4">
       <div className="w-full max-w-md">
-        <div className="text-center mb-8">
-          <h1 className="text-4xl font-black uppercase tracking-tight">HackTracker</h1>
-          <p className="text-gray-500 mt-2 font-medium">by Reskill</p>
+        <div className="text-center mb-10 flex flex-col items-center">
+          <Image
+            src="/HackTracker.png"
+            alt="HackTracker Logo"
+            width={180}
+            height={180}
+            className="rounded-2xl shadow-2xl shadow-primary/10 transition-transform hover:scale-105 duration-500"
+          />
         </div>
 
-        <div className="flex mb-4 border-2 border-black dark:border-white rounded-lg p-1">
+        <div className="flex mb-6 border-2 border-black dark:border-primary rounded-xl p-1 bg-black/5 dark:bg-primary/5">
           <button
             onClick={() => { setMode("login"); setError(""); setCreateMsg(""); }}
-            className={`flex-1 py-2 text-sm font-bold rounded-md transition ${
-              mode === "login" ? "bg-black text-white dark:bg-white dark:text-black" : ""
+            className={`flex-1 py-3 text-sm font-black uppercase tracking-wider rounded-lg transition-all duration-200 ${
+              mode === "login"
+                ? "bg-primary text-black shadow-lg"
+                : "text-gray-500 hover:text-black dark:hover:text-primary"
             }`}
           >
             Sign In
           </button>
           <button
             onClick={() => { setMode("create"); setError(""); setCreateMsg(""); }}
-            className={`flex-1 py-2 text-sm font-bold rounded-md transition ${
-              mode === "create" ? "bg-black text-white dark:bg-white dark:text-black" : ""
+            className={`flex-1 py-3 text-sm font-black uppercase tracking-wider rounded-lg transition-all duration-200 ${
+              mode === "create"
+                ? "bg-primary text-black shadow-lg"
+                : "text-gray-500 hover:text-black dark:hover:text-primary"
             }`}
           >
-            Create Hackathon
+            Create
           </button>
         </div>
 
         {mode === "login" ? (
-          <form onSubmit={handleLogin} className="border-2 border-black dark:border-white rounded-xl p-6 space-y-4">
+          <form onSubmit={handleLogin} className="border-2 border-black dark:border-primary/30 rounded-2xl p-8 space-y-6 bg-white dark:bg-black/40 backdrop-blur-sm shadow-xl">
             <div>
-              <label htmlFor="hackathon-id" className="block text-xs font-bold uppercase tracking-wider mb-1.5">Hackathon ID</label>
+              <label htmlFor="hackathon-id" className="block text-xs font-black uppercase tracking-widest mb-2 opacity-70">Hackathon ID</label>
               <input id="hackathon-id" type="text" value={hackathonId} onChange={(e) => setHackathonId(e.target.value)} placeholder="e.g. city_mumbai_2026" required className={inputClass} />
             </div>
             <div>
-              <label htmlFor="passcode" className="block text-xs font-bold uppercase tracking-wider mb-1.5">Organiser Passcode</label>
+              <label htmlFor="passcode" className="block text-xs font-black uppercase tracking-widest mb-2 opacity-70">Organiser Passcode</label>
               <input id="passcode" type="password" value={passcode} onChange={(e) => setPasscode(e.target.value)} placeholder="6-digit passcode" required maxLength={10} className={inputClass} />
             </div>
-            {error && <p className="text-red-500 text-sm font-bold">{error}</p>}
-            <button type="submit" disabled={loading} className="w-full rounded-lg bg-black dark:bg-white text-white dark:text-black py-3 text-sm font-black uppercase tracking-wider hover:opacity-80 transition disabled:opacity-50">
-              {loading ? "Verifying..." : "Sign In"}
+            {error && <p className="text-red-500 text-sm font-bold bg-red-500/10 p-3 rounded-lg border border-red-500/20">{error}</p>}
+            <button type="submit" disabled={loading} className="w-full rounded-xl bg-primary text-black py-4 text-sm font-black uppercase tracking-widest hover:brightness-110 active:scale-[0.98] transition-all disabled:opacity-50 shadow-lg shadow-primary/20">
+              {loading ? "Verifying..." : "Enter Dashboard"}
             </button>
           </form>
         ) : (
-          <form onSubmit={handleCreate} className="border-2 border-black dark:border-white rounded-xl p-6 space-y-4">
+          <form onSubmit={handleCreate} className="border-2 border-black dark:border-primary/30 rounded-2xl p-8 space-y-5 bg-white dark:bg-black/40 backdrop-blur-sm shadow-xl">
             <div>
-              <label htmlFor="new-id" className="block text-xs font-bold uppercase tracking-wider mb-1.5">Hackathon ID</label>
+              <label htmlFor="new-id" className="block text-xs font-black uppercase tracking-widest mb-2 opacity-70">Hackathon ID</label>
               <input id="new-id" type="text" value={newId} onChange={(e) => setNewId(e.target.value.toLowerCase().replace(/\s+/g, "_"))} placeholder="e.g. city_mumbai_2026" required className={inputClass} />
-              <p className="text-xs text-gray-400 mt-1 font-medium">Lowercase, no spaces. Teams enter this on their phones.</p>
+              <p className="text-[10px] text-gray-400 mt-2 font-bold uppercase tracking-tight">Teams enter this on their phones</p>
             </div>
             <div>
-              <label htmlFor="new-name" className="block text-xs font-bold uppercase tracking-wider mb-1.5">Hackathon Name</label>
-              <input id="new-name" type="text" value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="e.g. iQOO Mumbai Hackathon 2026" required className={inputClass} />
+              <label htmlFor="new-name" className="block text-xs font-black uppercase tracking-widest mb-2 opacity-70">Hackathon Name</label>
+              <input id="new-name" type="text" value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="e.g. iQOO Mumbai 2026" required className={inputClass} />
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 gap-4">
               <div>
-                <label htmlFor="new-start" className="block text-xs font-bold uppercase tracking-wider mb-1.5">Start</label>
+                <label htmlFor="new-start" className="block text-xs font-black uppercase tracking-widest mb-2 opacity-70">Start</label>
                 <input id="new-start" type="datetime-local" value={newStart} onChange={(e) => setNewStart(e.target.value)} required className={inputClass} />
               </div>
               <div>
-                <label htmlFor="new-end" className="block text-xs font-bold uppercase tracking-wider mb-1.5">End</label>
+                <label htmlFor="new-end" className="block text-xs font-black uppercase tracking-widest mb-2 opacity-70">End</label>
                 <input id="new-end" type="datetime-local" value={newEnd} onChange={(e) => setNewEnd(e.target.value)} required className={inputClass} />
               </div>
             </div>
             <div>
-              <label htmlFor="new-passcode" className="block text-xs font-bold uppercase tracking-wider mb-1.5">Organiser Passcode</label>
-              <input id="new-passcode" type="password" value={newPasscode} onChange={(e) => setNewPasscode(e.target.value)} placeholder="Set a 6+ digit passcode" required minLength={6} className={inputClass} />
+              <label htmlFor="new-passcode" className="block text-xs font-black uppercase tracking-widest mb-2 opacity-70">Passcode</label>
+              <input id="new-passcode" type="password" value={newPasscode} onChange={(e) => setNewPasscode(e.target.value)} placeholder="6+ digits" required minLength={6} className={inputClass} />
             </div>
-            {createMsg && <p className={`text-sm font-bold ${createMsg.includes("Created") ? "text-green-600" : "text-red-500"}`}>{createMsg}</p>}
-            <button type="submit" disabled={loading} className="w-full rounded-lg bg-black dark:bg-white text-white dark:text-black py-3 text-sm font-black uppercase tracking-wider hover:opacity-80 transition disabled:opacity-50">
-              {loading ? "Creating..." : "Create & Enter Dashboard"}
+            {createMsg && <p className={`text-sm font-bold p-3 rounded-lg border ${createMsg.includes("Created") ? "text-green-500 bg-green-500/10 border-green-500/20" : "text-red-500 bg-red-500/10 border-red-500/20"}`}>{createMsg}</p>}
+            <button type="submit" disabled={loading} className="w-full rounded-xl bg-primary text-black py-4 text-sm font-black uppercase tracking-widest hover:brightness-110 active:scale-[0.98] transition-all disabled:opacity-50 shadow-lg shadow-primary/20">
+              {loading ? "Creating..." : "Create & Launch"}
             </button>
           </form>
         )}

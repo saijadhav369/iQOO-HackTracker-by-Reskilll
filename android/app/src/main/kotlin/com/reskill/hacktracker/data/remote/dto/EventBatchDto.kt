@@ -12,7 +12,8 @@ data class EventBatchDto(
     @SerializedName("per_app_taps") val perAppTaps: Map<String, Int>?,
     @SerializedName("per_app_scrolls") val perAppScrolls: Map<String, Int>?,
     @SerializedName("per_app_text_inputs") val perAppTextInputs: Map<String, Int>?,
-    @SerializedName("foreground_app") val foregroundApp: String?
+    @SerializedName("foreground_app") val foregroundApp: String?,
+    @SerializedName("office_kit_seconds") val officeKitSeconds: Int = 0
 )
 
 data class EventCounts(
@@ -21,5 +22,6 @@ data class EventCounts(
     val scrolls: Int,
     @SerializedName("app_switches") val appSwitches: Int,
     @SerializedName("long_presses") val longPresses: Int = 0,
-    val notifications: Int = 0
+    val notifications: Int = 0,
+    @SerializedName("keyboard_active_seconds") val keyboardActiveSeconds: Int = 0
 )
