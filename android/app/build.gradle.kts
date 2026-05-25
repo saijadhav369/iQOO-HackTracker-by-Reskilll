@@ -69,3 +69,16 @@ dependencies {
     // Gson
     implementation("com.google.code.gson:gson:2.11.0")
 }
+
+// Auto-copy the built debug APK into web/public so the dashboard hosts it at
+// /app-debug.apk for QR provisioning. Runs automatically after assembleDebug;
+// no-op if the APK isn't present.
+val copyDebugApkToWeb by tasks.registering(Copy::class) {
+    from(layout.buildDirectory.dir("outputs/apk/debug")) {
+        include("app-debug.apk")
+    }
+    into(rootProject.layout.projectDirectory.dir("../web/public"))
+}
+tasks.matching { it.name == "assembleDebug" }.configureEach {
+    finalizedBy(copyDebugApkToWeb)
+}

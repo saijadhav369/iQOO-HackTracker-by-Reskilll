@@ -18,6 +18,18 @@ export async function GET(
         batteryLevel: deviceVitals.batteryLevel,
         temperature: deviceVitals.temperature,
         cpuUsage: deviceVitals.cpuUsage,
+        thermalStatus: deviceVitals.thermalStatus,
+        thermalHeadroom: deviceVitals.thermalHeadroom,
+        monsterMode: deviceVitals.monsterMode,
+        memAvailableMb: deviceVitals.memAvailableMb,
+        memTotalMb: deviceVitals.memTotalMb,
+        isCharging: deviceVitals.isCharging,
+        chargingType: deviceVitals.chargingType,
+        networkType: deviceVitals.networkType,
+        cellularDbm: deviceVitals.cellularDbm,
+        wifiRssi: deviceVitals.wifiRssi,
+        dataRxMb: deviceVitals.dataRxMb,
+        dataTxMb: deviceVitals.dataTxMb,
       })
       .from(deviceVitals)
       .where(eq(deviceVitals.teamId, id))

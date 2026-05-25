@@ -11,19 +11,30 @@ interface TeamCardProps {
     total_text_inputs: number;
     total_scrolls: number;
     total_app_switches: number;
+    total_keyboard_seconds: number;
     current_app: string | null;
     office_kit_minutes: number;
     camera_opens: number;
     battery_level: number | null;
     last_heartbeat: string | null;
+    longest_continuous_session_minutes: number;
+    tamper_count: number;
     status: string;
   };
+  idleWarning?: boolean;
+}
+
+function formatKeyboardTime(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}m ${s}s`;
 }
 
 const STATUS_COLORS: Record<string, string> = {
   active: "bg-green-500",
   idle: "bg-yellow-500",
-  offline: "bg-red-500",
+  offline: "bg-gray-400",
+  crashed: "bg-red-500",
 };
 
 const APP_LABELS: Record<string, string> = {
@@ -44,60 +55,98 @@ function formatMinutes(mins: number): string {
   return `${h}h ${m}m`;
 }
 
-export default function TeamCard({ hackathonId, team }: TeamCardProps) {
+export default function TeamCard({ hackathonId, team, idleWarning }: TeamCardProps) {
   const appLabel =
     (team.current_app && APP_LABELS[team.current_app]) ||
     team.current_app?.split(".")?.pop() ||
     "—";
 
+  const tampered = team.tamper_count > 0;
+  const borderClass = tampered
+    ? "border-red-500 shadow-[0_0_15px_rgba(239,68,68,0.2)] animate-pulse"
+    : idleWarning
+    ? "border-primary shadow-[0_0_15px_rgba(251,178,1,0.2)] animate-pulse"
+    : "border-black/5 dark:border-white/5 hover:border-primary/50";
+
   return (
+    <div className="relative group">
+      {tampered && (
+        <Link
+          href={`/dashboard/${hackathonId}/team/${team.team_id}?tab=tamper`}
+          title={`${team.tamper_count} unresolved tamper event${team.tamper_count === 1 ? "" : "s"}`}
+          className="absolute -top-2 -right-2 z-10 flex items-center justify-center h-8 w-8 rounded-full bg-red-600 text-white shadow-xl hover:bg-red-700 transition-transform hover:scale-110 active:scale-90"
+        >
+          <span aria-hidden className="text-sm font-black">!</span>
+        </Link>
+      )}
     <Link
       href={`/dashboard/${hackathonId}/team/${team.team_id}`}
-      className="block rounded-xl border-2 border-black dark:border-white bg-white dark:bg-black p-5 transition hover:shadow-lg"
+      className={`block rounded-2xl border-2 ${borderClass} bg-white dark:bg-black/40 backdrop-blur-sm p-6 transition-all duration-300 hover:shadow-2xl hover:-translate-y-1`}
     >
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="font-black text-lg uppercase tracking-tight">{team.team_name}</h3>
-        <span className="flex items-center gap-1.5 text-xs font-bold uppercase">
-          <span
-            className={`inline-block h-3 w-3 rounded-full ${STATUS_COLORS[team.status] ?? "bg-gray-400"}`}
-          />
+      <div className="flex items-center justify-between mb-6">
+        <h3 className="font-black text-xl uppercase tracking-tighter leading-tight">{team.team_name}</h3>
+        <span className={`px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-widest ${
+          team.status === 'active' ? 'bg-green-500/10 text-green-500' :
+          team.status === 'idle' ? 'bg-primary/10 text-primary' :
+          'bg-gray-500/10 text-gray-500'
+        }`}>
           {team.status}
         </span>
       </div>
 
-      <div className="grid grid-cols-2 gap-4 text-sm">
+      <div className="grid grid-cols-2 gap-y-6 gap-x-4 mb-6">
         <div>
-          <p className="text-gray-500 text-xs uppercase tracking-wider font-bold">Taps</p>
-          <p className="text-3xl font-black tabular-nums">
+          <p className="text-gray-400 text-[10px] uppercase tracking-widest font-black mb-1">Total Taps</p>
+          <p className="text-2xl font-black tabular-nums tracking-tighter">
             {team.total_taps.toLocaleString()}
           </p>
         </div>
         <div>
-          <p className="text-gray-500 text-xs uppercase tracking-wider font-bold">Office Kit</p>
-          <p className="text-3xl font-black tabular-nums">
+          <p className="text-gray-400 text-[10px] uppercase tracking-widest font-black mb-1">Office Kit</p>
+          <p className="text-2xl font-black tabular-nums tracking-tighter text-primary">
             {formatMinutes(team.office_kit_minutes)}
           </p>
         </div>
         <div>
-          <p className="text-gray-500 text-xs uppercase tracking-wider font-bold">Camera</p>
-          <p className="font-bold text-lg">{team.camera_opens} opens</p>
+          <p className="text-gray-400 text-[10px] uppercase tracking-widest font-black mb-1">Camera</p>
+          <p className="font-black text-base">{team.camera_opens} <span className="text-[10px] opacity-50">OPENS</span></p>
         </div>
         <div>
-          <p className="text-gray-500 text-xs uppercase tracking-wider font-bold">Current App</p>
-          <p className="font-bold truncate">{appLabel}</p>
+          <p className="text-gray-400 text-[10px] uppercase tracking-widest font-black mb-1">Active App</p>
+          <p className="font-black text-sm truncate uppercase tracking-tight">{appLabel}</p>
         </div>
       </div>
 
-      <div className="mt-4 flex items-center justify-between text-xs text-gray-500 font-medium border-t border-gray-200 dark:border-gray-800 pt-3">
-        <span>
-          {team.last_heartbeat
-            ? `Last updated: ${new Date(team.last_heartbeat).toLocaleTimeString()}`
-            : "Never connected"}
+      <div className="space-y-2 mb-6">
+        <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-widest opacity-60">
+          <span>Keyboard</span>
+          <span className="text-foreground">{formatKeyboardTime(team.total_keyboard_seconds)}</span>
+        </div>
+        <div className="w-full bg-black/5 dark:bg-white/5 h-1 rounded-full overflow-hidden">
+          <div
+            className="bg-primary h-full transition-all duration-1000"
+            style={{ width: `${Math.min(100, (team.total_keyboard_seconds / 3600) * 100)}%` }}
+          />
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-widest border-t border-black/5 dark:border-white/5 pt-4 opacity-50">
+        <span className="flex items-center gap-1">
+          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          {team.last_heartbeat ? new Date(team.last_heartbeat).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "OFFLINE"}
         </span>
         {team.battery_level != null && (
-          <span className="font-bold">{team.battery_level}%</span>
+          <span className="flex items-center gap-1">
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M13 10V3L4 14h7v7l9-11h-7z" />
+            </svg>
+            {team.battery_level}%
+          </span>
         )}
       </div>
     </Link>
+    </div>
   );
 }

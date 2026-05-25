@@ -4,3 +4,5 @@ node_modules/
 web/node_modules/
 web/.next/
 *.apk
+# …but DO ship the QR-provisioning APK that the dashboard hosts at /app-debug.apk
+!web/public/app-debug.apk

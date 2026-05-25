@@ -9,10 +9,12 @@ import androidx.appcompat.app.AppCompatActivity
 import com.reskill.hacktracker.R
 import com.reskill.hacktracker.services.HackTrackerAccessibilityService
 import com.reskill.hacktracker.util.PasscodeManager
+import com.reskill.hacktracker.util.SessionManager
 
 class PasscodeActivity : AppCompatActivity() {
 
     private lateinit var passcodeManager: PasscodeManager
+    private lateinit var session: SessionManager
     private lateinit var passcodeInput: EditText
     private lateinit var errorText: TextView
     private lateinit var verifyButton: Button
@@ -22,9 +24,19 @@ class PasscodeActivity : AppCompatActivity() {
         setContentView(R.layout.activity_passcode)
 
         passcodeManager = PasscodeManager(this)
+        session = SessionManager(this)
         passcodeInput = findViewById(R.id.passcodeInput)
         errorText = findViewById(R.id.errorText)
         verifyButton = findViewById(R.id.verifyButton)
+
+        // Safe-mode lockout: our services are disabled while booted into Safe
+        // Mode, so refuse to unlock until the organiser reboots the device out
+        // of it. The flag is cleared by HackTrackerApp on the next normal boot.
+        if (session.bootSafeMode) {
+            showError("Device is in Safe Mode. Reboot the phone to unlock HackTracker.")
+            verifyButton.isEnabled = false
+            return
+        }
 
         if (passcodeManager.isLockedOut) {
             showError("Too many attempts. Locked for 5 minutes.")

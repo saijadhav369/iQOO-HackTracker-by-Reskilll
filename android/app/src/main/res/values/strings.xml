@@ -4,4 +4,6 @@
     <string name="accessibility_description">HackTracker by Reskill tracks tap counts and app usage during the hackathon. No personal data is captured.</string>
     <string name="notification_channel_name">HackTracker Tracking</string>
     <string name="notification_channel_description">Shows when HackTracker is actively tracking device usage</string>
+    <string name="notification_channel_push_name">Organiser Alerts</string>
+    <string name="notification_channel_push_description">Heads-up nudges from the organiser dashboard (idle warnings, broadcasts)</string>
 </resources>

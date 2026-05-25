@@ -21,6 +21,8 @@ export async function POST(req: NextRequest) {
         textInputs: data.events.text_inputs,
         scrolls: data.events.scrolls,
         appSwitches: data.events.app_switches,
+        keyboardActiveSeconds: data.events.keyboard_active_seconds,
+        officeKitSeconds: data.office_kit_seconds ?? 0,
         perAppTaps: data.per_app_taps ?? null,
         foregroundApp: data.foreground_app ?? null,
       })

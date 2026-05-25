@@ -1,15 +1,17 @@
 export const dynamic = "force-dynamic";
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { heartbeats, notifications, eventBatches, deviceVitals } from "@/lib/db/schema";
+import { heartbeats, notifications, eventBatches, deviceVitals, hackathons, screenshotRequests } from "@/lib/db/schema";
 import { heartbeatSchema } from "@/lib/validators";
-import { eq, and, gt, sql, desc } from "drizzle-orm";
+import { eq, and, gt, sql, desc, asc } from "drizzle-orm";
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const data = heartbeatSchema.parse(body);
     const now = new Date();
+    // TEMP debug — confirm where the phone is heartbeating (localhost vs Railway)
+    console.log(`[HB] ${now.toISOString()} device=${data.device_id} team=${data.team_id} ua=${req.headers.get("user-agent") ?? "?"} xfwd=${req.headers.get("x-forwarded-for") ?? "?"}`);
 
     // Upsert heartbeat
     const existing = await db
@@ -23,6 +25,9 @@ export async function POST(req: NextRequest) {
       )
       .limit(1);
 
+    // clean_exit is optional + defaults to true so old APKs keep working.
+    const cleanExit = data.clean_exit ?? true;
+
     if (existing.length > 0) {
       await db
         .update(heartbeats)
@@ -30,6 +35,7 @@ export async function POST(req: NextRequest) {
           lastSeen: now,
           batteryLevel: data.battery_level ?? null,
           temperature: data.temperature ?? null,
+          lastCleanExit: cleanExit,
         })
         .where(eq(heartbeats.id, existing[0].id));
     } else {
@@ -40,20 +46,70 @@ export async function POST(req: NextRequest) {
         lastSeen: now,
         batteryLevel: data.battery_level ?? null,
         temperature: data.temperature ?? null,
+        lastCleanExit: cleanExit,
       });
     }
 
-    // Store vitals history (every heartbeat = ~30s intervals)
-    if (data.battery_level != null || data.temperature != null || data.cpu_usage != null) {
-      await db.insert(deviceVitals).values({
-        teamId: data.team_id,
-        hackathonId: data.hackathon_id,
-        recordedAt: now,
-        batteryLevel: data.battery_level ?? null,
-        temperature: data.temperature ?? null,
-        cpuUsage: data.cpu_usage ?? null,
-      });
+    // Store vitals history. The phone heartbeats at 5s for fast screenshot
+    // pickup, but vitals at that cadence would 6× the row count for no
+    // observable benefit — throttle to ≥25s between inserts per team.
+    if (
+      data.battery_level != null ||
+      data.temperature != null ||
+      data.cpu_usage != null ||
+      data.thermal_headroom != null ||
+      data.thermal_status != null ||
+      data.monster_mode != null ||
+      data.mem_available_mb != null ||
+      data.mem_total_mb != null ||
+      data.is_charging != null ||
+      data.charging_type != null ||
+      data.network_type != null ||
+      data.cellular_dbm != null ||
+      data.wifi_rssi != null ||
+      data.data_rx_mb_since_boot != null ||
+      data.data_tx_mb_since_boot != null
+    ) {
+      const [latestVital] = await db
+        .select({ recordedAt: deviceVitals.recordedAt })
+        .from(deviceVitals)
+        .where(eq(deviceVitals.teamId, data.team_id))
+        .orderBy(desc(deviceVitals.recordedAt))
+        .limit(1);
+      const lastTs = latestVital?.recordedAt
+        ? new Date(latestVital.recordedAt).getTime()
+        : 0;
+      if (!lastTs || now.getTime() - lastTs >= 25_000) {
+        await db.insert(deviceVitals).values({
+          teamId: data.team_id,
+          hackathonId: data.hackathon_id,
+          recordedAt: now,
+          batteryLevel: data.battery_level ?? null,
+          temperature: data.temperature ?? null,
+          cpuUsage: data.cpu_usage ?? null,
+          thermalHeadroom: data.thermal_headroom ?? null,
+          thermalStatus: data.thermal_status ?? null,
+          monsterMode: data.monster_mode ?? null,
+          memAvailableMb: data.mem_available_mb ?? null,
+          memTotalMb: data.mem_total_mb ?? null,
+          isCharging: data.is_charging ?? null,
+          chargingType: data.charging_type ?? null,
+          networkType: data.network_type ?? null,
+          cellularDbm: data.cellular_dbm ?? null,
+          wifiRssi: data.wifi_rssi ?? null,
+          dataRxMb: data.data_rx_mb_since_boot ?? null,
+          dataTxMb: data.data_tx_mb_since_boot ?? null,
+        });
+      }
     }
+
+    // Fetch hackathon light state (venue signal, not enforcement)
+    const [hk] = await db
+      .select({ currentLight: hackathons.currentLight })
+      .from(hackathons)
+      .where(eq(hackathons.id, data.hackathon_id))
+      .limit(1);
+    const currentLight = hk?.currentLight ?? "green";
 
     // Get last seen notification id
     const lastSeenId = data.last_notification_id ?? 0;
@@ -101,9 +157,24 @@ export async function POST(req: NextRequest) {
       }
     });
 
+    // Oldest pending screenshot for this team → device picks it up next tick.
+    const [pendingShot] = await db
+      .select({ id: screenshotRequests.id })
+      .from(screenshotRequests)
+      .where(
+        and(
+          eq(screenshotRequests.teamId, data.team_id),
+          eq(screenshotRequests.status, "pending")
+        )
+      )
+      .orderBy(asc(screenshotRequests.requestedAt))
+      .limit(1);
+
     return NextResponse.json({
       success: true,
       server_time: now.toISOString(),
+      current_light: currentLight,
+      pending_screenshot_id: pendingShot?.id ?? null,
       notifications: applicableNotifs.map((n) => ({
         id: n.id,
         title: n.title,

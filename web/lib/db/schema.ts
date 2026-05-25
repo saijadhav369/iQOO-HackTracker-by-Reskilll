@@ -17,8 +17,27 @@ export const hackathons = pgTable("hackathons", {
   endTime: timestamp("end_time", { withTimezone: true }).notNull(),
   organiserPasscodeHash: text("organiser_passcode_hash").notNull(),
   status: text("status").default("upcoming").notNull(), // upcoming | active | ended
+  currentLight: text("current_light").default("green").notNull(), // green | red — venue signal only
+  lightChangedAt: timestamp("light_changed_at", { withTimezone: true }),
+  scoringConfig: jsonb("scoring_config"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
+
+export const lightTransitions = pgTable(
+  "light_transitions",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    hackathonId: text("hackathon_id")
+      .references(() => hackathons.id)
+      .notNull(),
+    light: text("light").notNull(), // green | red
+    changedAt: timestamp("changed_at", { withTimezone: true }).notNull(),
+    changedBy: text("changed_by"),
+  },
+  (table) => [
+    index("idx_light_transitions_hackathon").on(table.hackathonId, table.changedAt),
+  ]
+);
 
 export const teams = pgTable("teams", {
   id: text("id").primaryKey(),
@@ -48,6 +67,8 @@ export const eventBatches = pgTable(
     textInputs: integer("text_inputs").default(0),
     scrolls: integer("scrolls").default(0),
     appSwitches: integer("app_switches").default(0),
+    keyboardActiveSeconds: integer("keyboard_active_seconds").default(0),
+    officeKitSeconds: integer("office_kit_seconds").default(0),
     perAppTaps: jsonb("per_app_taps"),
     foregroundApp: text("foreground_app"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
@@ -139,10 +160,54 @@ export const deviceVitals = pgTable(
     recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull(),
     batteryLevel: integer("battery_level"),
     temperature: real("temperature"), // celsius
-    cpuUsage: real("cpu_usage"), // percentage
+    cpuUsage: real("cpu_usage"), // percentage (actually device memory pressure — see TrackingRepository)
+    thermalHeadroom: real("thermal_headroom"), // PowerManager.getThermalHeadroom: 0..1+ (1.0 = throttling threshold)
+    thermalStatus: integer("thermal_status"), // PowerManager.getCurrentThermalStatus: 0=NONE .. 7=SHUTDOWN (4=SEVERE)
+    monsterMode: boolean("monster_mode"), // iQOO high-performance mode (best-effort vendor read)
+    // Feature 9 — expanded vitals. All nullable so old APKs keep posting unchanged.
+    memAvailableMb: integer("mem_available_mb"), // ActivityManager available RAM (MB)
+    memTotalMb: integer("mem_total_mb"), // ActivityManager total RAM (MB)
+    isCharging: boolean("is_charging"), // power source plugged in
+    chargingType: text("charging_type"), // ac | usb | wireless | none
+    networkType: text("network_type"), // wifi | cellular | vpn | none
+    cellularDbm: integer("cellular_dbm"), // TelephonyManager signal strength (dBm)
+    wifiRssi: integer("wifi_rssi"), // WifiManager RSSI (dBm)
+    dataRxMb: real("data_rx_mb"), // TrafficStats total received since boot (MB)
+    dataTxMb: real("data_tx_mb"), // TrafficStats total transmitted since boot (MB)
   },
   (table) => [
     index("idx_vitals_team").on(table.teamId, table.recordedAt),
+  ]
+);
+
+export const sensorAggregates = pgTable(
+  "sensor_aggregates",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    teamId: text("team_id")
+      .references(() => teams.id)
+      .notNull(),
+    hackathonId: text("hackathon_id")
+      .references(() => hackathons.id)
+      .notNull(),
+    deviceId: text("device_id"),
+    periodStart: timestamp("period_start", { withTimezone: true }).notNull(),
+    periodEnd: timestamp("period_end", { withTimezone: true }).notNull(),
+    accelMean: real("accel_mean"),
+    accelStddev: real("accel_stddev"),
+    accelPeak: real("accel_peak"),
+    gyroMean: real("gyro_mean"),
+    gyroStddev: real("gyro_stddev"),
+    gyroPeak: real("gyro_peak"),
+    magnetoMean: real("magneto_mean"),
+    luxMean: real("lux_mean"),
+    proximityNearPct: real("proximity_near_pct"),
+    stepsDelta: integer("steps_delta"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  },
+  (table) => [
+    index("idx_sensors_team").on(table.teamId, table.periodStart),
+    index("idx_sensors_hackathon").on(table.hackathonId, table.periodStart),
   ]
 );
 
@@ -160,8 +225,105 @@ export const heartbeats = pgTable(
     lastSeen: timestamp("last_seen", { withTimezone: true }).notNull(),
     batteryLevel: integer("battery_level"),
     temperature: real("temperature"),
+    lastCleanExit: boolean("last_clean_exit").default(true).notNull(),
   },
   (table) => [
     index("idx_heartbeats_device").on(table.deviceId, table.hackathonId),
+  ]
+);
+
+export const organiserAlerts = pgTable(
+  "organiser_alerts",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    hackathonId: text("hackathon_id")
+      .references(() => hackathons.id)
+      .notNull(),
+    teamId: text("team_id")
+      .references(() => teams.id)
+      .notNull(),
+    type: text("type").notNull(), // idle_warning | ...future
+    message: text("message").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    dismissedAt: timestamp("dismissed_at", { withTimezone: true }),
+  },
+  (table) => [
+    index("idx_organiser_alerts_hackathon").on(table.hackathonId, table.createdAt),
+    index("idx_organiser_alerts_team_type").on(table.teamId, table.type, table.createdAt),
+  ]
+);
+
+export const screenshotRequests = pgTable(
+  "screenshot_requests",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    teamId: text("team_id")
+      .references(() => teams.id)
+      .notNull(),
+    hackathonId: text("hackathon_id")
+      .references(() => hackathons.id)
+      .notNull(),
+    requestedAt: timestamp("requested_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    capturedAt: timestamp("captured_at", { withTimezone: true }),
+    imageUrl: text("image_url"),
+    status: text("status").default("pending").notNull(), // pending | captured | failed
+  },
+  (table) => [
+    index("idx_screenshot_requests_team").on(table.teamId, table.requestedAt),
+    index("idx_screenshot_requests_team_status").on(
+      table.teamId,
+      table.status,
+      table.requestedAt
+    ),
+  ]
+);
+
+export const tamperEvents = pgTable(
+  "tamper_events",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    teamId: text("team_id")
+      .references(() => teams.id)
+      .notNull(),
+    hackathonId: text("hackathon_id")
+      .references(() => hackathons.id)
+      .notNull(),
+    // settings_page_open | adb_toggled | time_drift | safe_mode_boot |
+    // package_added | package_removed | lock_task_engaged | ...future
+    type: text("type").notNull(),
+    detail: jsonb("detail"), // type-specific payload (e.g. {heading}, {newValue}, {drift_ms}, {package})
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+    // resolvedAt backs the dashboard "unresolved count" badge. Null = unresolved.
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  },
+  (table) => [
+    index("idx_tamper_team").on(table.teamId, table.occurredAt),
+    index("idx_tamper_hackathon").on(table.hackathonId, table.occurredAt),
+  ]
+);
+
+export const crashLogs = pgTable(
+  "crash_logs",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    teamId: text("team_id")
+      .references(() => teams.id)
+      .notNull(),
+    hackathonId: text("hackathon_id")
+      .references(() => hackathons.id)
+      .notNull(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+    threadName: text("thread_name"),
+    stacktrace: text("stacktrace"),
+    foregroundApp: text("foreground_app"),
+    reason: text("reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  },
+  (table) => [
+    index("idx_crash_logs_team").on(table.teamId, table.occurredAt),
+    index("idx_crash_logs_hackathon").on(table.hackathonId, table.occurredAt),
   ]
 );

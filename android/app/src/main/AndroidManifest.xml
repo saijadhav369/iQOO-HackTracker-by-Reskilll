@@ -5,20 +5,25 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission
         android:name="android.permission.PACKAGE_USAGE_STATS"
         tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- Feature 9 — expanded vitals: network transport + Wi-Fi signal reads. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
 
     <application
         android:name=".HackTrackerApp"
         android:allowBackup="false"
         android:usesCleartextTraffic="true"
-        android:icon="@android:drawable/ic_menu_compass"
+        android:icon="@drawable/logo"
         android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Material3.DayNight.NoActionBar"
+        android:theme="@style/Theme.HackTracker"
         tools:targetApi="35">
 
         <!-- Main entry (Setup screen) -->
@@ -50,10 +55,12 @@
                 android:resource="@xml/accessibility_config" />
         </service>
 
-        <!-- Foreground Tracking Service -->
+        <!-- Foreground Tracking Service: specialUse for heartbeats/aggregates;
+             mediaProjection is conditionally activated for non-device-owner
+             devices that fall back to MediaProjection screenshot capture. -->
         <service
             android:name=".services.TrackingForegroundService"
-            android:foregroundServiceType="specialUse"
+            android:foregroundServiceType="specialUse|mediaProjection"
             android:exported="false">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"

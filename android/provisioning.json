@@ -1,0 +1,17 @@
+{
+  "android.app.extra.PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME": "com.reskill.hacktracker/com.reskill.hacktracker.receivers.HackTrackerAdminReceiver",
+  "android.app.extra.PROVISIONING_DEVICE_ADMIN_SIGNATURE_CHECKSUM": "7iZ7B9zRDWJZ_3fc6r9NmNDU5k3cyNJs5wu_GN8aNwU",
+  "android.app.extra.PROVISIONING_DEVICE_ADMIN_PACKAGE_DOWNLOAD_LOCATION": "https://your-app.up.railway.app/app-debug.apk",
+  "android.app.extra.PROVISIONING_LEAVE_ALL_SYSTEM_APPS_ENABLED": true,
+  "android.app.extra.PROVISIONING_SKIP_ENCRYPTION": false,
+  "android.app.extra.PROVISIONING_ADMIN_EXTRAS_BUNDLE": {
+    "cfg_api_url": "https://your-app.up.railway.app/api",
+    "cfg_hackathon_id": "iqoo_2026",
+    "cfg_team_id": "team_01",
+    "cfg_team_name": "CodeCrafters",
+    "cfg_passcode": "123456"
+  },
+  "android.app.extra.PROVISIONING_WIFI_SSID": "VenueWifi",
+  "android.app.extra.PROVISIONING_WIFI_SECURITY_TYPE": "WPA",
+  "android.app.extra.PROVISIONING_WIFI_PASSWORD": "venuepass"
+}

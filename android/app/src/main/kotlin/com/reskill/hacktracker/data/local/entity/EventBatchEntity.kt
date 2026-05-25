@@ -17,6 +17,8 @@ data class EventBatchEntity(
     val appSwitches: Int = 0,
     val longPresses: Int = 0,
     val notifications: Int = 0,
+    val keyboardActiveSeconds: Int = 0,
+    val officeKitSeconds: Int = 0,
     val perAppTaps: String = "{}",
     val perAppScrolls: String = "{}",
     val perAppTextInputs: String = "{}",

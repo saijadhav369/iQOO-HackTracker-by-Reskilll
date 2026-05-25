@@ -5,8 +5,12 @@ import {
   eventBatches,
   heartbeats,
   cameraEvents,
+  hackathons,
+  deviceVitals,
+  tamperEvents,
 } from "@/lib/db/schema";
-import { eq, sql, desc } from "drizzle-orm";
+import { eq, sql, desc, asc, isNull, and } from "drizzle-orm";
+import { computeLongestSessionMsPerTeam } from "@/lib/sessions";
 
 export const dynamic = "force-dynamic";
 
@@ -20,14 +24,30 @@ export async function GET(
     // Single query: teams + aggregated batches
     const teamRows = await db.select().from(teams).where(eq(teams.hackathonId, id));
 
+    const [hk] = await db
+      .select({
+        currentLight: hackathons.currentLight,
+        lightChangedAt: hackathons.lightChangedAt,
+      })
+      .from(hackathons)
+      .where(eq(hackathons.id, id))
+      .limit(1);
+    const currentLight = hk?.currentLight ?? "green";
+    const lightChangedAt = hk?.lightChangedAt ?? null;
+
     if (teamRows.length === 0) {
-      return NextResponse.json({ teams: [], server_time: new Date().toISOString() });
+      return NextResponse.json({
+        teams: [],
+        current_light: currentLight,
+        light_changed_at: lightChangedAt,
+        server_time: new Date().toISOString(),
+      });
     }
 
     const teamIds = teamRows.map((t) => t.id);
 
     // Run remaining queries in parallel
-    const [batchTotals, latestBatches, cameraOpens, heartbeatRows] = await Promise.all([
+    const [batchTotals, latestBatches, cameraOpens, heartbeatRows, vitalTicks, tamperCounts] = await Promise.all([
       // Aggregate totals per team
       db
         .select({
@@ -36,6 +56,7 @@ export async function GET(
           totalTextInputs: sql<number>`coalesce(sum(${eventBatches.textInputs}), 0)::int`,
           totalScrolls: sql<number>`coalesce(sum(${eventBatches.scrolls}), 0)::int`,
           totalAppSwitches: sql<number>`coalesce(sum(${eventBatches.appSwitches}), 0)::int`,
+          totalKeyboardSeconds: sql<number>`coalesce(sum(${eventBatches.keyboardActiveSeconds}), 0)::int`,
         })
         .from(eventBatches)
         .where(eq(eventBatches.hackathonId, id))
@@ -64,11 +85,47 @@ export async function GET(
 
       // Heartbeats
       db.select().from(heartbeats).where(eq(heartbeats.hackathonId, id)),
+
+      // Per-heartbeat trail (one row per ~30s) for session computation
+      db
+        .select({
+          teamId: deviceVitals.teamId,
+          recordedAt: deviceVitals.recordedAt,
+        })
+        .from(deviceVitals)
+        .where(eq(deviceVitals.hackathonId, id))
+        .orderBy(asc(deviceVitals.teamId), asc(deviceVitals.recordedAt)),
+
+      // Unresolved tamper events per team → red ⚠ badge on the team card.
+      // Isolated in its own try/catch so a missing/unmigrated tamper_events
+      // table degrades to zero badges instead of 500-ing the whole live grid.
+      (async () => {
+        try {
+          return await db
+            .select({
+              teamId: tamperEvents.teamId,
+              count: sql<number>`count(*)::int`,
+            })
+            .from(tamperEvents)
+            .where(
+              and(
+                eq(tamperEvents.hackathonId, id),
+                isNull(tamperEvents.resolvedAt)
+              )
+            )
+            .groupBy(tamperEvents.teamId);
+        } catch {
+          return [] as { teamId: string; count: number }[];
+        }
+      })(),
     ]);
+
+    const longestSessionMsMap = computeLongestSessionMsPerTeam(vitalTicks);
 
     // Build lookup maps
     const batchMap = new Map(batchTotals.map((b) => [b.teamId, b]));
     const cameraMap = new Map(cameraOpens.map((c) => [c.teamId, c.count]));
+    const tamperMap = new Map(tamperCounts.map((t) => [t.teamId, t.count]));
 
     // Keep only the most recent heartbeat per team
     const heartbeatMap = new Map<string, typeof heartbeatRows[0]>();
@@ -94,9 +151,12 @@ export async function GET(
       const lastSeen = hb?.lastSeen ? new Date(hb.lastSeen).getTime() : 0;
       const ageSec = (now - lastSeen) / 1000;
 
-      let status = "offline";
+      // heartbeat-dead (>300s) splits into crashed (dirty exit) vs offline (clean exit).
+      // last_clean_exit defaults true, so absent/never-connected devices read as offline.
+      let status: "active" | "idle" | "offline" | "crashed" = "offline";
       if (ageSec < 60) status = "active";
       else if (ageSec < 300) status = "idle";
+      else status = hb?.lastCleanExit === false ? "crashed" : "offline";
 
       return {
         team_id: team.id,
@@ -106,16 +166,23 @@ export async function GET(
         total_text_inputs: batch?.totalTextInputs ?? 0,
         total_scrolls: batch?.totalScrolls ?? 0,
         total_app_switches: batch?.totalAppSwitches ?? 0,
+        total_keyboard_seconds: batch?.totalKeyboardSeconds ?? 0,
         current_app: latestAppMap.get(team.id) ?? null,
         camera_opens: cameraMap.get(team.id) ?? 0,
         last_heartbeat: hb?.lastSeen ?? null,
         battery_level: hb?.batteryLevel ?? null,
+        longest_continuous_session_minutes: Math.round(
+          (longestSessionMsMap.get(team.id) ?? 0) / 60000
+        ),
+        tamper_count: tamperMap.get(team.id) ?? 0,
         status,
       };
     });
 
     return NextResponse.json({
       teams: result,
+      current_light: currentLight,
+      light_changed_at: lightChangedAt,
       server_time: new Date().toISOString(),
     });
   } catch (e: unknown) {

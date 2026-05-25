@@ -1,11 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.HackTracker" parent="Theme.Material3.DayNight.NoActionBar">
+    <!-- The whole UI is designed dark (black backgrounds, white text). Lock to
+         the Dark base so Material surfaces never flip to light — otherwise the
+         filled text boxes composite their translucent-white background over a
+         light surface and render white, hiding the white input text. -->
+    <style name="Theme.HackTracker" parent="Theme.Material3.Dark.NoActionBar">
         <item name="colorPrimary">@color/primary</item>
         <item name="colorOnPrimary">@color/black</item>
         <item name="colorSecondary">@color/primary</item>
         <item name="colorOnSecondary">@color/black</item>
-        <item name="android:statusBarColor">?attr/colorSurface</item>
-        <item name="android:windowLightStatusBar">true</item>
+        <!-- Keep surfaces dark so input boxes stay dark and text stays legible. -->
+        <item name="colorSurface">@color/gray_dark</item>
+        <item name="colorSurfaceVariant">@color/gray_dark</item>
+        <item name="android:colorBackground">@color/black</item>
+        <item name="android:statusBarColor">@color/black</item>
+        <item name="android:windowLightStatusBar">false</item>
     </style>
 </resources>
