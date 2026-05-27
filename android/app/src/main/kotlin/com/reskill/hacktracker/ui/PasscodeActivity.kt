@@ -39,7 +39,8 @@ class PasscodeActivity : AppCompatActivity() {
         }
 
         if (passcodeManager.isLockedOut) {
-            showError("Too many attempts. Locked for 5 minutes.")
+            val minutes = ((passcodeManager.lockoutRemainingMs + 59_999L) / 60_000L).toInt()
+            showError("Too many attempts. Locked for $minutes more minute${if (minutes == 1) "" else "s"}.")
             verifyButton.isEnabled = false
         }
 
@@ -81,12 +82,13 @@ class PasscodeActivity : AppCompatActivity() {
                     finish()
                 }
             } else {
-                passcodeManager.recordFailedAttempt()
+                val lockoutMs = passcodeManager.recordFailedAttempt()
                 val remaining = 3 - passcodeManager.failedAttempts
                 if (remaining > 0) {
                     showError("Wrong passcode. $remaining attempts remaining.")
                 } else {
-                    showError("Too many attempts. Locked for 5 minutes.")
+                    val minutes = ((lockoutMs + 59_999L) / 60_000L).toInt()
+                    showError("Too many attempts. Locked for $minutes minute${if (minutes == 1) "" else "s"}.")
                     verifyButton.isEnabled = false
                 }
                 passcodeInput.text.clear()

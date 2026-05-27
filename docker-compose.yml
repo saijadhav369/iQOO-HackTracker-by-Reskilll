@@ -1,0 +1,19 @@
+services:
+  web:
+    build:
+      context: .
+      args:
+        DATABASE_URL: ${DATABASE_URL}
+    image: hacktracker:latest
+    container_name: hacktracker
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+    env_file:
+      - .env
+    networks:
+      - hacktracker-net
+
+networks:
+  hacktracker-net:
+    external: true
