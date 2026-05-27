@@ -444,6 +444,11 @@ export default function TeamDetailPage() {
               teamId={teamId}
               screenshots={screenshots}
               onRefresh={fetchScreenshots}
+              deviceId={
+                selectedDevice && selectedDevice !== ALL_DEVICES
+                  ? selectedDevice
+                  : undefined
+              }
             />
           </section>
         )}

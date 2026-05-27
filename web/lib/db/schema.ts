@@ -304,6 +304,9 @@ export const screenshotRequests = pgTable(
     hackathonId: text("hackathon_id")
       .references(() => hackathons.id)
       .notNull(),
+    // Target this request at a specific phone. NULL = any phone in the team
+    // (the legacy un-targeted behaviour, kept for backward compat).
+    deviceId: text("device_id"),
     requestedAt: timestamp("requested_at", { withTimezone: true })
       .defaultNow()
       .notNull(),

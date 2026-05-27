@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { heartbeats, notifications, eventBatches, deviceVitals, hackathons, screenshotRequests } from "@/lib/db/schema";
 import { heartbeatSchema } from "@/lib/validators";
-import { eq, and, gt, sql, desc, asc } from "drizzle-orm";
+import { eq, and, gt, sql, desc, asc, or, isNull } from "drizzle-orm";
 
 export async function POST(req: NextRequest) {
   try {
@@ -167,13 +167,21 @@ export async function POST(req: NextRequest) {
     });
 
     // Oldest pending screenshot for this team → device picks it up next tick.
+    // Multi-phone teams: a request can be pinned to a specific device_id.
+    // We only pick up requests that are EITHER (a) untargeted (legacy team-
+    // wide requests) OR (b) targeted at this exact device. Other members'
+    // pending requests are filtered out.
     const [pendingShot] = await db
       .select({ id: screenshotRequests.id })
       .from(screenshotRequests)
       .where(
         and(
           eq(screenshotRequests.teamId, data.team_id),
-          eq(screenshotRequests.status, "pending")
+          eq(screenshotRequests.status, "pending"),
+          or(
+            isNull(screenshotRequests.deviceId),
+            eq(screenshotRequests.deviceId, data.device_id)
+          )
         )
       )
       .orderBy(asc(screenshotRequests.requestedAt))

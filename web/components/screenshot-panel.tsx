@@ -6,6 +6,7 @@ export interface ScreenshotEntry {
   id: number;
   teamId: string;
   hackathonId: string;
+  deviceId: string | null;
   requestedAt: string;
   capturedAt: string | null;
   imageUrl: string | null;
@@ -16,19 +17,31 @@ export default function ScreenshotPanel({
   teamId,
   screenshots,
   onRefresh,
+  // When provided, captures are pinned to this specific phone and the
+  // displayed list is filtered to rows from this device. When undefined
+  // (the TEAM tab), the panel behaves team-wide as before.
+  deviceId,
 }: {
   teamId: string;
   screenshots: ScreenshotEntry[];
   onRefresh: () => void;
+  deviceId?: string;
 }) {
   const [requesting, setRequesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lightbox, setLightbox] = useState<ScreenshotEntry | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
 
+  // Filter to this member's screenshots when a deviceId is supplied. Captured
+  // rows without a deviceId (legacy team-wide captures) stay visible on every
+  // member tab so historical screenshots aren't orphaned by the migration.
+  const visibleScreenshots = deviceId
+    ? screenshots.filter((s) => s.deviceId === deviceId || s.deviceId === null)
+    : screenshots;
+
   // Oldest pending row drives the in-flight UI. Server coalesces clicks so
-  // there's at most one pending request per team.
-  const oldestPending = screenshots
+  // there's at most one pending request per (team, deviceId) tuple.
+  const oldestPending = visibleScreenshots
     .filter((s) => s.status !== "captured")
     .reduce<ScreenshotEntry | null>(
       (oldest, s) =>
@@ -54,6 +67,10 @@ export default function ScreenshotPanel({
       const res = await fetch(`/api/team/${teamId}/screenshot`, {
         method: "POST",
         cache: "no-store",
+        headers: deviceId ? { "Content-Type": "application/json" } : undefined,
+        // Body only when targeting a specific member — empty POST keeps the
+        // legacy team-wide behaviour on the TEAM tab.
+        body: deviceId ? JSON.stringify({ device_id: deviceId }) : undefined,
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as { error?: string } | null;
@@ -132,13 +149,13 @@ export default function ScreenshotPanel({
         </div>
       )}
 
-      {screenshots.length === 0 ? (
+      {visibleScreenshots.length === 0 ? (
         <div className="rounded-xl border-2 border-black dark:border-white bg-white dark:bg-black p-6 text-center text-sm text-gray-500 font-bold">
           No screenshots yet. Hit &quot;Capture screen&quot; — image appears within ~10–15s.
         </div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-          {screenshots.map((s) => (
+          {visibleScreenshots.map((s) => (
             <ScreenshotTile
               key={s.id}
               shot={s}
