@@ -6,6 +6,21 @@ import { createHackathonSchema } from "@/lib/validators";
 import { hashPasscode } from "@/lib/auth/passcode";
 import { getSession } from "@/lib/auth/jwt";
 
+// Same friendly-error treatment as /api/team — without this, the raw Drizzle
+// "Failed query: insert into hackathons ..." blob leaks into the Create
+// Hackathon form when an id is reused.
+function pgErrorResponse(e: unknown): NextResponse {
+  const err = e as { code?: string; message?: string };
+  if (err?.code === "23505") {
+    return NextResponse.json(
+      { error: "A hackathon with that ID already exists. Pick a different Hackathon ID." },
+      { status: 409 }
+    );
+  }
+  const message = err?.message ?? "Invalid request";
+  return NextResponse.json({ error: message }, { status: 400 });
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -24,8 +39,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(row, { status: 201 });
   } catch (e: unknown) {
-    const message = e instanceof Error ? e.message : "Invalid request";
-    return NextResponse.json({ error: message }, { status: 400 });
+    return pgErrorResponse(e);
   }
 }
 
