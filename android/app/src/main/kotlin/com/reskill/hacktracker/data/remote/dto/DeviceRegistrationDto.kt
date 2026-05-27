@@ -6,5 +6,7 @@ data class DeviceRegistrationDto(
     @SerializedName("device_id") val deviceId: String,
     @SerializedName("hackathon_id") val hackathonId: String,
     @SerializedName("team_id") val teamId: String,
-    @SerializedName("team_name") val teamName: String
+    @SerializedName("team_name") val teamName: String,
+    @SerializedName("member_slot") val memberSlot: Int,
+    @SerializedName("member_name") val memberName: String
 )

@@ -3,6 +3,15 @@
 import { useEffect, useState, useCallback } from "react";
 import TeamCard from "./team-card";
 
+interface MemberState {
+  slot: number;
+  member_name: string;
+  device_id: string;
+  online: boolean;
+  last_heartbeat: string | null;
+  battery_level: number | null;
+}
+
 interface TeamData {
   team_id: string;
   team_name: string;
@@ -19,6 +28,9 @@ interface TeamData {
   longest_continuous_session_minutes: number;
   tamper_count: number;
   status: string;
+  members: MemberState[];
+  members_online: number;
+  members_total: number;
 }
 
 type SortKey =

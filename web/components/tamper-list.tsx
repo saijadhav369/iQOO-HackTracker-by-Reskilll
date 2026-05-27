@@ -6,6 +6,7 @@ export interface TamperEntry {
   detail: Record<string, unknown> | null;
   occurredAt: string;
   resolvedAt: string | null;
+  memberLabel?: string | null;
 }
 
 // Human labels + colour per tamper type. Unknown types fall back to the raw
@@ -82,6 +83,11 @@ export default function TamperList({ entries }: { entries: TamperEntry[] }) {
               >
                 {m.label}
               </span>
+              {entry.memberLabel && (
+                <span className="px-2 py-0.5 text-xs font-bold uppercase tracking-wider rounded bg-primary/10 text-primary border border-primary/20">
+                  {entry.memberLabel}
+                </span>
+              )}
               {entry.resolvedAt && (
                 <span className="px-2 py-0.5 text-xs font-bold uppercase tracking-wider rounded bg-green-200 dark:bg-green-900 text-green-900 dark:text-green-100">
                   Resolved

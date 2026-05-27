@@ -175,6 +175,49 @@
                     </com.google.android.material.textfield.TextInputLayout>
                 </LinearLayout>
 
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:orientation="horizontal"
+                    android:baselineAligned="false">
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:layout_width="0dp"
+                        android:layout_weight="1"
+                        android:layout_height="wrap_content"
+                        android:layout_marginEnd="6dp"
+                        style="@style/Widget.Material3.TextInputLayout.FilledBox"
+                        app:boxBackgroundColor="#1AFFFFFF"
+                        app:hintTextColor="@color/primary"
+                        app:helperText="1, 2 or 3"
+                        app:helperTextTextColor="#66FFFFFF">
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/memberSlotInput"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:hint="Member Slot"
+                            android:textColor="@color/white"
+                            android:inputType="number" />
+                    </com.google.android.material.textfield.TextInputLayout>
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:layout_width="0dp"
+                        android:layout_weight="2"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="6dp"
+                        style="@style/Widget.Material3.TextInputLayout.FilledBox"
+                        app:boxBackgroundColor="#1AFFFFFF"
+                        app:hintTextColor="@color/primary">
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/memberNameInput"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:hint="Your Name"
+                            android:textColor="@color/white"
+                            android:inputType="textPersonName" />
+                    </com.google.android.material.textfield.TextInputLayout>
+                </LinearLayout>
+
                 <com.google.android.material.textfield.TextInputLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"

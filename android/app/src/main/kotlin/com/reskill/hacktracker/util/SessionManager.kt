@@ -23,6 +23,16 @@ class SessionManager(context: Context) {
         get() = prefs.getString("team_name", "") ?: ""
         set(value) = prefs.edit().putString("team_name", value).apply()
 
+    /** Display ordinal (1, 2, 3 ...) for the participant on this phone within the team. */
+    var memberSlot: Int
+        get() = prefs.getInt("member_slot", 1)
+        set(value) = prefs.edit().putInt("member_slot", value).apply()
+
+    /** Free-form participant name. Shown on the dashboard as "Member {slot}: {name}". */
+    var memberName: String
+        get() = prefs.getString("member_name", "") ?: ""
+        set(value) = prefs.edit().putString("member_name", value).apply()
+
     val deviceId: String
         get() {
             val stored = prefs.getString("device_id", null)
@@ -93,4 +103,5 @@ class SessionManager(context: Context) {
 
     val isConfigured: Boolean
         get() = hackathonId.isNotBlank() && teamId.isNotBlank() && apiUrl.isNotBlank()
+            && memberName.isNotBlank() && memberSlot in 1..99
 }

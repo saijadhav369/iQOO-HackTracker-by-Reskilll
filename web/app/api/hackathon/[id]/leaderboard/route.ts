@@ -23,6 +23,7 @@ const THERMAL_STATUS_SEVERE = 4;
 
 interface VitalRow {
   teamId: string;
+  deviceId: string | null;
   recordedAt: Date | null;
   cpuUsage: number | null;
   batteryLevel: number | null;
@@ -39,74 +40,119 @@ interface VitalsDerived {
   monsterModeMinutes: number;
 }
 
-// Rows MUST be grouped by team and ordered by recordedAt ascending.
+// Rows MUST be ordered by (teamId asc, deviceId asc, recordedAt asc).
+// Multi-phone teams: we accumulate per (team, device) so CPU/battery deltas
+// only compare consecutive samples from the same phone, then fold per-device
+// state into the team result. Without per-device partitioning, interleaved
+// samples from different phones generate phantom compile spikes and inflate
+// battery drain. See plan: okay-add-such-a-optimized-puppy.md.
 function deriveVitalsPerTeam(rows: VitalRow[]): Map<string, VitalsDerived> {
   const out = new Map<string, VitalsDerived>();
+
   let team: string | null = null;
+  let device: string | null = null;
+
+  // Per-device accumulators (reset on each device boundary):
   let prevCpu: number | null = null;
   let prevBattery: number | null = null;
-  let firstTs = 0;
-  let lastTs = 0;
-  let spikes = 0;
-  let drained = 0;
-  let maxHeadroom = 0;
-  let redline = 0;
-  const monsterMinutes = new Set<number>();
+  let deviceFirstTs = 0;
+  let deviceLastTs = 0;
+  let deviceSpikes = 0;
+  let deviceDrained = 0;
 
-  const flush = () => {
+  // Per-team folded state (reset on each team boundary):
+  let teamSpikes = 0;
+  let teamDrained = 0;
+  let teamObservedMs = 0;
+  let teamMaxHeadroom = 0;
+  let teamRedline = 0;
+  let teamMonsterMinutes = new Set<number>();
+
+  const foldDevice = () => {
+    if (device === null) return;
+    teamSpikes += deviceSpikes;
+    teamDrained += deviceDrained;
+    if (deviceLastTs > deviceFirstTs) {
+      teamObservedMs += deviceLastTs - deviceFirstTs;
+    }
+  };
+
+  const flushTeam = () => {
     if (team === null) return;
-    const hours = lastTs > firstTs ? (lastTs - firstTs) / 3_600_000 : 0;
+    foldDevice();
+    const hours = teamObservedMs / 3_600_000;
     out.set(team, {
-      compileSpikes: spikes,
-      batteryDrainRate: hours > 0 ? drained / hours : 0,
-      thermalHeadroom: maxHeadroom,
-      hardwareRedline: redline,
-      monsterModeMinutes: monsterMinutes.size,
+      compileSpikes: teamSpikes,
+      batteryDrainRate: hours > 0 ? teamDrained / hours : 0,
+      thermalHeadroom: teamMaxHeadroom,
+      hardwareRedline: teamRedline,
+      monsterModeMinutes: teamMonsterMinutes.size,
     });
   };
 
+  const startDevice = (newDeviceKey: string, firstTs: number) => {
+    prevCpu = null;
+    prevBattery = null;
+    deviceFirstTs = firstTs;
+    deviceLastTs = firstTs;
+    deviceSpikes = 0;
+    deviceDrained = 0;
+    device = newDeviceKey;
+  };
+
+  const startTeam = (newTeam: string) => {
+    teamSpikes = 0;
+    teamDrained = 0;
+    teamObservedMs = 0;
+    teamMaxHeadroom = 0;
+    teamRedline = 0;
+    teamMonsterMinutes = new Set<number>();
+    team = newTeam;
+    device = null;
+  };
+
   for (const r of rows) {
+    const ts = r.recordedAt ? new Date(r.recordedAt).getTime() : 0;
+    // Null deviceId would collapse all unattributed rows into one bucket per
+    // team — treat each as its own pseudo-device keyed by row index to be safe.
+    const rowDevice = r.deviceId ?? `__nodevice__`;
+
     if (r.teamId !== team) {
-      flush();
-      team = r.teamId;
-      prevCpu = null;
-      prevBattery = null;
-      firstTs = r.recordedAt ? new Date(r.recordedAt).getTime() : 0;
-      lastTs = firstTs;
-      spikes = 0;
-      drained = 0;
-      maxHeadroom = 0;
-      redline = 0;
-      monsterMinutes.clear();
+      flushTeam();
+      startTeam(r.teamId);
+      startDevice(rowDevice, ts);
+    } else if (rowDevice !== device) {
+      foldDevice();
+      startDevice(rowDevice, ts);
     }
 
-    const ts = r.recordedAt ? new Date(r.recordedAt).getTime() : 0;
-    if (ts) lastTs = ts;
+    if (ts) deviceLastTs = ts;
 
     if (r.cpuUsage != null) {
-      if (prevCpu != null && r.cpuUsage - prevCpu > COMPILE_SPIKE_DELTA) spikes++;
+      if (prevCpu != null && r.cpuUsage - prevCpu > COMPILE_SPIKE_DELTA) deviceSpikes++;
       prevCpu = r.cpuUsage;
     }
 
     if (r.batteryLevel != null) {
       // Only count drops; charging (level rising) doesn't earn drain credit.
       if (prevBattery != null && prevBattery > r.batteryLevel) {
-        drained += prevBattery - r.batteryLevel;
+        deviceDrained += prevBattery - r.batteryLevel;
       }
       prevBattery = r.batteryLevel;
     }
 
-    if (r.thermalHeadroom != null && r.thermalHeadroom > maxHeadroom) {
-      maxHeadroom = r.thermalHeadroom;
+    // Team-wide signals (no per-device walk needed):
+    if (r.thermalHeadroom != null && r.thermalHeadroom > teamMaxHeadroom) {
+      teamMaxHeadroom = r.thermalHeadroom;
     }
     if (r.thermalStatus != null && r.thermalStatus >= THERMAL_STATUS_SEVERE) {
-      redline++;
+      teamRedline++;
     }
     if (r.monsterMode === true && ts) {
-      monsterMinutes.add(Math.floor(ts / 60_000));
+      teamMonsterMinutes.add(Math.floor(ts / 60_000));
     }
   }
-  flush();
+  flushTeam();
   return out;
 }
 
@@ -150,6 +196,11 @@ export async function GET(
         db
           .select({
             teamId: deviceVitals.teamId,
+            // Multi-phone teams: partition the per-phone walks so CPU/battery
+            // deltas only compare consecutive samples from the same device.
+            // Legacy rows have deviceId = null and collapse into a single
+            // "__nodevice__" pseudo-device per team (preserves old behavior).
+            deviceId: deviceVitals.deviceId,
             recordedAt: deviceVitals.recordedAt,
             cpuUsage: deviceVitals.cpuUsage,
             batteryLevel: deviceVitals.batteryLevel,
@@ -159,7 +210,11 @@ export async function GET(
           })
           .from(deviceVitals)
           .where(eq(deviceVitals.hackathonId, id))
-          .orderBy(asc(deviceVitals.teamId), asc(deviceVitals.recordedAt)),
+          .orderBy(
+            asc(deviceVitals.teamId),
+            asc(deviceVitals.deviceId),
+            asc(deviceVitals.recordedAt)
+          ),
         db
           .select({
             teamId: crashLogs.teamId,

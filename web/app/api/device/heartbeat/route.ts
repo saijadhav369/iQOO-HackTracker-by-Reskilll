@@ -70,10 +70,18 @@ export async function POST(req: NextRequest) {
       data.data_rx_mb_since_boot != null ||
       data.data_tx_mb_since_boot != null
     ) {
+      // Throttle per-(team, device): with multi-phone teams, throttling at the
+      // team level would let one phone's heartbeat suppress another's vitals
+      // insert for 25s. We want one row per phone per 25s.
       const [latestVital] = await db
         .select({ recordedAt: deviceVitals.recordedAt })
         .from(deviceVitals)
-        .where(eq(deviceVitals.teamId, data.team_id))
+        .where(
+          and(
+            eq(deviceVitals.teamId, data.team_id),
+            eq(deviceVitals.deviceId, data.device_id)
+          )
+        )
         .orderBy(desc(deviceVitals.recordedAt))
         .limit(1);
       const lastTs = latestVital?.recordedAt
@@ -83,6 +91,7 @@ export async function POST(req: NextRequest) {
         await db.insert(deviceVitals).values({
           teamId: data.team_id,
           hackathonId: data.hackathon_id,
+          deviceId: data.device_id,
           recordedAt: now,
           batteryLevel: data.battery_level ?? null,
           temperature: data.temperature ?? null,

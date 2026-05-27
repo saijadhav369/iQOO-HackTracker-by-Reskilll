@@ -46,6 +46,8 @@ class SetupActivity : AppCompatActivity() {
     private lateinit var hackathonIdInput: EditText
     private lateinit var teamIdInput: EditText
     private lateinit var teamNameInput: EditText
+    private lateinit var memberSlotInput: EditText
+    private lateinit var memberNameInput: EditText
     private lateinit var passcodeSetInput: EditText
     private lateinit var saveButton: Button
     private lateinit var stopButton: Button
@@ -120,6 +122,8 @@ class SetupActivity : AppCompatActivity() {
         hackathonIdInput = findViewById(R.id.hackathonIdInput)
         teamIdInput = findViewById(R.id.teamIdInput)
         teamNameInput = findViewById(R.id.teamNameInput)
+        memberSlotInput = findViewById(R.id.memberSlotInput)
+        memberNameInput = findViewById(R.id.memberNameInput)
         passcodeSetInput = findViewById(R.id.passcodeSetInput)
         saveButton = findViewById(R.id.saveButton)
         stopButton = findViewById(R.id.stopButton)
@@ -148,6 +152,8 @@ class SetupActivity : AppCompatActivity() {
         hackathonIdInput.setText(session.hackathonId)
         teamIdInput.setText(session.teamId)
         teamNameInput.setText(session.teamName)
+        if (session.memberSlot in 1..99) memberSlotInput.setText(session.memberSlot.toString())
+        memberNameInput.setText(session.memberName)
         deviceIdText.text = "Device ID: ${session.deviceId}"
 
         // Ask for POST_NOTIFICATIONS up front — without it, Android 13+ drops
@@ -205,11 +211,14 @@ class SetupActivity : AppCompatActivity() {
         val hackathonId = intent?.getStringExtra("cfg_hackathon_id")
         val teamId = intent?.getStringExtra("cfg_team_id")
         val teamName = intent?.getStringExtra("cfg_team_name")
+        val memberSlot = intent?.getStringExtra("cfg_member_slot")
+        val memberName = intent?.getStringExtra("cfg_member_name")
         val passcode = intent?.getStringExtra("cfg_passcode")
 
         // Bail if NO extras at all (normal launcher tap).
         if (apiUrl.isNullOrBlank() && hackathonId.isNullOrBlank()
             && teamId.isNullOrBlank() && teamName.isNullOrBlank()
+            && memberSlot.isNullOrBlank() && memberName.isNullOrBlank()
             && passcode.isNullOrBlank()) return
 
         // Pre-fill any field that was provided. Empty/missing extras leave the
@@ -219,13 +228,16 @@ class SetupActivity : AppCompatActivity() {
         if (!hackathonId.isNullOrBlank()) hackathonIdInput.setText(hackathonId)
         if (!teamId.isNullOrBlank()) teamIdInput.setText(teamId)
         if (!teamName.isNullOrBlank()) teamNameInput.setText(teamName)
+        if (!memberSlot.isNullOrBlank()) memberSlotInput.setText(memberSlot)
+        if (!memberName.isNullOrBlank()) memberNameInput.setText(memberName)
         if (!passcode.isNullOrBlank()) passcodeSetInput.setText(passcode)
 
         // Auto-start tracking only when the full set of required fields is
         // present. With --defer-team provisioning the organiser will tap Save
-        // manually after typing team_id + team_name on the phone.
+        // manually after typing team_id + team_name + member info on the phone.
         if (!apiUrl.isNullOrBlank() && !hackathonId.isNullOrBlank()
-            && !teamId.isNullOrBlank() && !teamName.isNullOrBlank()) {
+            && !teamId.isNullOrBlank() && !teamName.isNullOrBlank()
+            && !memberSlot.isNullOrBlank() && !memberName.isNullOrBlank()) {
             saveAndStart()
         }
     }
@@ -300,6 +312,8 @@ class SetupActivity : AppCompatActivity() {
             hackathonIdInput.isEnabled = false
             teamIdInput.isEnabled = false
             teamNameInput.isEnabled = false
+            memberSlotInput.isEnabled = false
+            memberNameInput.isEnabled = false
             passcodeSetInput.isEnabled = false
         } else {
             saveButton.visibility = View.VISIBLE
@@ -308,6 +322,8 @@ class SetupActivity : AppCompatActivity() {
             hackathonIdInput.isEnabled = true
             teamIdInput.isEnabled = true
             teamNameInput.isEnabled = true
+            memberSlotInput.isEnabled = true
+            memberNameInput.isEnabled = true
             passcodeSetInput.isEnabled = true
         }
     }
@@ -317,10 +333,19 @@ class SetupActivity : AppCompatActivity() {
         val hackathonId = hackathonIdInput.text.toString().trim()
         val teamId = teamIdInput.text.toString().trim()
         val teamName = teamNameInput.text.toString().trim()
+        val memberSlotRaw = memberSlotInput.text.toString().trim()
+        val memberName = memberNameInput.text.toString().trim()
         val passcode = passcodeSetInput.text.toString().trim()
 
-        if (apiUrl.isBlank() || hackathonId.isBlank() || teamId.isBlank() || teamName.isBlank()) {
+        if (apiUrl.isBlank() || hackathonId.isBlank() || teamId.isBlank() || teamName.isBlank()
+            || memberSlotRaw.isBlank() || memberName.isBlank()) {
             Toast.makeText(this, "Fill all fields", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val memberSlot = memberSlotRaw.toIntOrNull()
+        if (memberSlot == null || memberSlot !in 1..99) {
+            Toast.makeText(this, "Member slot must be 1, 2, 3 ...", Toast.LENGTH_SHORT).show()
             return
         }
 
@@ -334,6 +359,8 @@ class SetupActivity : AppCompatActivity() {
         session.hackathonId = hackathonId
         session.teamId = teamId
         session.teamName = teamName
+        session.memberSlot = memberSlot
+        session.memberName = memberName
 
         if (passcode.isNotBlank()) {
             passcodeManager.setPasscode(passcode)
@@ -349,14 +376,34 @@ class SetupActivity : AppCompatActivity() {
         saveButton.text = "Starting..."
         CoroutineScope(Dispatchers.IO).launch {
             val repository = com.reskill.hacktracker.data.repository.TrackingRepository(applicationContext)
-            val registered = repository.registerDevice()
+            val result = repository.registerDevice()
             withContext(Dispatchers.Main) {
-                if (!registered) {
-                    Toast.makeText(this@SetupActivity, "Could not reach server — will retry in background.", Toast.LENGTH_LONG).show()
-                }
-                session.isTracking = true
                 saveButton.isEnabled = true
                 saveButton.text = "Save & Start Tracking"
+
+                when (result) {
+                    is com.reskill.hacktracker.data.repository.TrackingRepository.RegisterResult.SlotConflict -> {
+                        // Don't flip isTracking — the participant needs to pick a
+                        // different slot first or this phone will never appear on
+                        // the dashboard.
+                        Toast.makeText(
+                            this@SetupActivity,
+                            "Member slot ${result.slot} is already taken on this team. Pick a different slot and tap Save again.",
+                            Toast.LENGTH_LONG
+                        ).show()
+                        return@withContext
+                    }
+                    is com.reskill.hacktracker.data.repository.TrackingRepository.RegisterResult.Failure -> {
+                        Toast.makeText(
+                            this@SetupActivity,
+                            "Could not reach server — will retry in background.",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                    is com.reskill.hacktracker.data.repository.TrackingRepository.RegisterResult.Success -> {}
+                }
+
+                session.isTracking = true
 
                 // Start foreground service
                 val serviceIntent = Intent(this@SetupActivity, TrackingForegroundService::class.java)
