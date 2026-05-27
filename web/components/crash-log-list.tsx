@@ -9,6 +9,7 @@ export interface CrashLogEntry {
   stacktrace: string | null;
   foregroundApp: string | null;
   reason: string | null;
+  memberLabel?: string | null;
 }
 
 function reasonBadge(reason: string | null): { label: string; cls: string } {
@@ -51,6 +52,11 @@ function CrashRow({ entry }: { entry: CrashLogEntry }) {
             >
               {badge.label}
             </span>
+            {entry.memberLabel && (
+              <span className="px-2 py-0.5 text-[10px] font-black uppercase tracking-widest rounded-md bg-primary/10 text-primary border border-primary/20">
+                {entry.memberLabel}
+              </span>
+            )}
             {entry.threadName && (
               <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest opacity-60">
                 {entry.threadName}

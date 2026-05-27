@@ -16,6 +16,7 @@ export async function POST(req: NextRequest) {
     const rows = data.crashes.map((c) => ({
       teamId: c.team_id,
       hackathonId: c.hackathon_id,
+      deviceId: c.device_id,
       occurredAt: new Date(c.occurred_at),
       threadName: c.thread_name ?? null,
       stacktrace: c.stacktrace ?? null,

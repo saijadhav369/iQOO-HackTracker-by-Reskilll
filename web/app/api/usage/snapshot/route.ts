@@ -12,6 +12,7 @@ export async function POST(req: NextRequest) {
     const rows = data.apps.map((app) => ({
       teamId: data.team_id,
       hackathonId: data.hackathon_id,
+      deviceId: data.device_id,
       snapshotTime: new Date(data.snapshot_time),
       appPackage: app.package,
       appLabel: app.label ?? null,

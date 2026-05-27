@@ -14,6 +14,7 @@ export async function POST(req: NextRequest) {
       .values({
         teamId: data.team_id,
         hackathonId: data.hackathon_id,
+        deviceId: data.device_id,
         eventTime: new Date(data.event_time),
       })
       .returning({ id: clipboardEvents.id });

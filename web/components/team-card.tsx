@@ -1,6 +1,16 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
+
+interface MemberState {
+  slot: number;
+  member_name: string;
+  device_id: string;
+  online: boolean;
+  last_heartbeat: string | null;
+  battery_level: number | null;
+}
 
 interface TeamCardProps {
   hackathonId: string;
@@ -20,6 +30,9 @@ interface TeamCardProps {
     longest_continuous_session_minutes: number;
     tamper_count: number;
     status: string;
+    members?: MemberState[];
+    members_online?: number;
+    members_total?: number;
   };
   idleWarning?: boolean;
 }
@@ -56,6 +69,7 @@ function formatMinutes(mins: number): string {
 }
 
 export default function TeamCard({ hackathonId, team, idleWarning }: TeamCardProps) {
+  const [membersOpen, setMembersOpen] = useState(false);
   const appLabel =
     (team.current_app && APP_LABELS[team.current_app]) ||
     team.current_app?.split(".")?.pop() ||
@@ -67,6 +81,9 @@ export default function TeamCard({ hackathonId, team, idleWarning }: TeamCardPro
     : idleWarning
     ? "border-primary shadow-[0_0_15px_rgba(251,178,1,0.2)] animate-pulse"
     : "border-black/5 dark:border-white/5 hover:border-primary/50";
+
+  const memberCount = team.members_total ?? team.members?.length ?? 0;
+  const onlineCount = team.members_online ?? 0;
 
   return (
     <div className="relative group">
@@ -83,15 +100,31 @@ export default function TeamCard({ hackathonId, team, idleWarning }: TeamCardPro
       href={`/dashboard/${hackathonId}/team/${team.team_id}`}
       className={`block rounded-2xl border-2 ${borderClass} bg-white dark:bg-black/40 backdrop-blur-sm p-6 transition-all duration-300 hover:shadow-2xl hover:-translate-y-1`}
     >
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-6 gap-2">
         <h3 className="font-black text-xl uppercase tracking-tighter leading-tight">{team.team_name}</h3>
-        <span className={`px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-widest ${
-          team.status === 'active' ? 'bg-green-500/10 text-green-500' :
-          team.status === 'idle' ? 'bg-primary/10 text-primary' :
-          'bg-gray-500/10 text-gray-500'
-        }`}>
-          {team.status}
-        </span>
+        <div className="flex items-center gap-2 shrink-0">
+          {memberCount > 0 && (
+            <span
+              className={`px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-widest ${
+                onlineCount === memberCount
+                  ? "bg-green-500/10 text-green-500"
+                  : onlineCount > 0
+                  ? "bg-primary/10 text-primary"
+                  : "bg-gray-500/10 text-gray-500"
+              }`}
+              title={`${onlineCount} of ${memberCount} members online`}
+            >
+              {onlineCount}/{memberCount} ONLINE
+            </span>
+          )}
+          <span className={`px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-widest ${
+            team.status === 'active' ? 'bg-green-500/10 text-green-500' :
+            team.status === 'idle' ? 'bg-primary/10 text-primary' :
+            'bg-gray-500/10 text-gray-500'
+          }`}>
+            {team.status}
+          </span>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-y-6 gap-x-4 mb-6">
@@ -129,6 +162,45 @@ export default function TeamCard({ hackathonId, team, idleWarning }: TeamCardPro
           />
         </div>
       </div>
+
+      {team.members && team.members.length > 0 && (
+        <div className="border-t border-black/5 dark:border-white/5 pt-3 mb-3">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setMembersOpen((v) => !v);
+            }}
+            className="w-full flex items-center justify-between text-[10px] font-black uppercase tracking-widest text-gray-400 hover:text-primary transition-colors"
+          >
+            <span>Members</span>
+            <span className={`transition-transform ${membersOpen ? "rotate-180" : ""}`}>▾</span>
+          </button>
+          {membersOpen && (
+            <ul className="mt-2 space-y-1">
+              {team.members.map((m) => (
+                <li
+                  key={m.device_id}
+                  className="flex items-center justify-between text-[10px] font-black uppercase tracking-widest"
+                >
+                  <span className="flex items-center gap-2 truncate">
+                    <span
+                      className={`inline-block h-1.5 w-1.5 rounded-full ${
+                        m.online ? "bg-green-500" : "bg-gray-400"
+                      }`}
+                    />
+                    <span className="truncate">M{m.slot}: {m.member_name}</span>
+                  </span>
+                  {m.battery_level != null && (
+                    <span className="opacity-60 tabular-nums">{m.battery_level}%</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
 
       <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-widest border-t border-black/5 dark:border-white/5 pt-4 opacity-50">
         <span className="flex items-center gap-1">

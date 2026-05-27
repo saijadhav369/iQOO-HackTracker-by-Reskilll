@@ -16,6 +16,7 @@ export async function POST(req: NextRequest) {
     const rows = data.events.map((e) => ({
       teamId: e.team_id,
       hackathonId: e.hackathon_id,
+      deviceId: e.device_id,
       type: e.type,
       detail: e.detail ?? null,
       occurredAt: new Date(e.occurred_at),

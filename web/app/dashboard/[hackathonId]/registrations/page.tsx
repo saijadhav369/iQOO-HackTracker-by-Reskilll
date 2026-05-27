@@ -113,7 +113,7 @@ export default function RegistrationsPage() {
                     Photo
                   </th>
                   <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest">
-                    IMEI
+                    IMEI / Device ID
                   </th>
                   <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest">
                     Team
@@ -145,7 +145,17 @@ export default function RegistrationsPage() {
                       </a>
                     </td>
                     <td className="px-4 py-3 font-mono text-xs">
-                      {row.imei ?? (
+                      {row.imei ? (
+                        <span title="IMEI (device-owner install)">{row.imei}</span>
+                      ) : row.deviceId ? (
+                        <span
+                          className="opacity-70"
+                          title="IMEI unavailable on this install; showing Android device ID instead"
+                        >
+                          {row.deviceId}
+                          <span className="ml-1 opacity-50">(device id)</span>
+                        </span>
+                      ) : (
                         <span className="opacity-50">(unavailable)</span>
                       )}
                     </td>

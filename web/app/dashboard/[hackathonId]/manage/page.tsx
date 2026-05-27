@@ -4,6 +4,15 @@ import { useState, useEffect, FormEvent } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 
+interface MemberRow {
+  slot: number;
+  memberName: string;
+  deviceId: string;
+  online: boolean;
+  lastHeartbeat: string | null;
+  batteryLevel: number | null;
+}
+
 interface Team {
   id: string;
   name: string;
@@ -11,6 +20,7 @@ interface Team {
   status: string;
   lastHeartbeat: string | null;
   batteryLevel: number | null;
+  members: MemberRow[];
 }
 
 import Image from "next/image";
@@ -322,7 +332,7 @@ export default function ManagePage() {
                 <thead>
                   <tr className="text-[10px] font-black uppercase tracking-widest text-gray-400 opacity-70">
                     <th className="pb-6">Team Details</th>
-                    <th className="pb-6">Device ID</th>
+                    <th className="pb-6">Members</th>
                     <th className="pb-6">Status</th>
                     <th className="pb-6">Last Active</th>
                     <th className="pb-6 text-right">Battery</th>
@@ -338,8 +348,31 @@ export default function ManagePage() {
                         <div className="font-black uppercase tracking-tight">{team.name}</div>
                         <div className="text-[10px] text-primary font-black uppercase tracking-widest opacity-50">{team.id}</div>
                       </td>
-                      <td className="py-5 pr-4 font-black tabular-nums text-xs opacity-50 group-hover:opacity-100 transition-opacity">
-                        {team.deviceId || "UNLINKED"}
+                      <td className="py-5 pr-4">
+                        {team.members.length === 0 ? (
+                          <span className="text-[10px] font-black uppercase tracking-widest text-gray-400 opacity-50">
+                            No phones registered
+                          </span>
+                        ) : (
+                          <ul className="space-y-1">
+                            {team.members.map((m) => (
+                              <li
+                                key={m.deviceId}
+                                className="flex items-center gap-2 text-[11px] font-black uppercase tracking-tight"
+                              >
+                                <span
+                                  className={`inline-block h-1.5 w-1.5 rounded-full ${
+                                    m.online ? "bg-green-500" : "bg-gray-400"
+                                  }`}
+                                />
+                                <span>M{m.slot}: {m.memberName}</span>
+                                {m.batteryLevel != null && (
+                                  <span className="opacity-60 tabular-nums">{m.batteryLevel}%</span>
+                                )}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
                       </td>
                       <td className="py-5 pr-4">
                         <div

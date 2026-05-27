@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import TapTimelineChart from "@/components/tap-timeline-chart";
 import AppUsagePie from "@/components/app-usage-pie";
@@ -13,6 +13,7 @@ import ExportButton from "@/components/export-button";
 import Link from "next/link";
 
 interface TimelineEntry {
+  deviceId: string | null;
   periodStart: string;
   periodEnd: string;
   taps: number | null;
@@ -25,32 +26,48 @@ interface TimelineEntry {
   perAppTaps: Record<string, number> | null;
 }
 
+interface Member {
+  deviceId: string;
+  slot: number;
+  memberName: string;
+}
+
+interface AppUsageRow {
+  deviceId: string | null;
+  appPackage: string;
+  appLabel: string | null;
+  foregroundMinutes: number;
+}
+
+interface DeviceCount {
+  deviceId: string | null;
+  count: number;
+}
 
 import Image from "next/image";
+
+const ALL_DEVICES = "__all__";
 
 export default function TeamDetailPage() {
   const params = useParams();
   const hackathonId = params.hackathonId as string;
   const teamId = params.teamId as string;
 
+  const [members, setMembers] = useState<Member[]>([]);
   const [timeline, setTimeline] = useState<TimelineEntry[]>([]);
-  const [vitals, setVitals] = useState<VitalsEntry[]>([]);
-  const [sensors, setSensors] = useState<SensorEntry[]>([]);
-  const [crashes, setCrashes] = useState<CrashLogEntry[]>([]);
-  const [tamper, setTamper] = useState<TamperEntry[]>([]);
-  const [appUsage, setAppUsage] = useState<
-    { appPackage: string; appLabel: string | null; foregroundMinutes: number }[]
-  >([]);
-  const [eventCounts, setEventCounts] = useState<{
-    cameraOpens: number;
-    clipboardEvents: number;
-  }>({ cameraOpens: 0, clipboardEvents: 0 });
+  const [vitals, setVitals] = useState<(VitalsEntry & { deviceId: string | null })[]>([]);
+  const [sensors, setSensors] = useState<(SensorEntry & { deviceId: string | null })[]>([]);
+  const [crashes, setCrashes] = useState<(CrashLogEntry & { deviceId: string | null })[]>([]);
+  const [tamper, setTamper] = useState<(TamperEntry & { deviceId: string | null })[]>([]);
+  const [appUsage, setAppUsage] = useState<AppUsageRow[]>([]);
+  const [cameraByDevice, setCameraByDevice] = useState<DeviceCount[]>([]);
+  const [clipboardByDevice, setClipboardByDevice] = useState<DeviceCount[]>([]);
   const [screenshots, setScreenshots] = useState<ScreenshotEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<"overview" | "screenshots" | "crashes" | "tamper">("overview");
+  const [selectedDevice, setSelectedDevice] = useState<string>(ALL_DEVICES);
 
-  // Deep-link from the team-card ⚠ badge (?tab=tamper). Read on the client only
-  // to avoid the useSearchParams static-build Suspense requirement.
+  // Deep-link from the team-card ⚠ badge (?tab=tamper).
   useEffect(() => {
     const t = new URLSearchParams(window.location.search).get("tab");
     if (t === "tamper" || t === "screenshots" || t === "crashes") setTab(t);
@@ -63,9 +80,6 @@ export default function TeamDetailPage() {
     } catch {}
   }, [teamId]);
 
-  // Track whether any row is still pending so we can fast-poll only when it
-  // matters (cuts dashboard-side latency for new captures from ~10s to ~2s
-  // without 5×-ing the load on timeline/vitals/sensors/crashes).
   const hasPending = screenshots.some((s) => s.status !== "captured");
 
   useEffect(() => {
@@ -88,13 +102,54 @@ export default function TeamDetailPage() {
           fetch(`/api/team/${teamId}/event-counts`, { cache: "no-store" }),
           fetch(`/api/team/${teamId}/tamper`, { cache: "no-store" }),
         ]);
-        if (timelineRes.ok) setTimeline(await timelineRes.json());
-        if (vitalsRes.ok) setVitals(await vitalsRes.json());
-        if (sensorsRes.ok) setSensors(await sensorsRes.json());
-        if (crashesRes.ok) setCrashes(await crashesRes.json());
-        if (appUsageRes.ok) setAppUsage(await appUsageRes.json());
-        if (eventCountsRes.ok) setEventCounts(await eventCountsRes.json());
-        if (tamperRes.ok) setTamper(await tamperRes.json());
+
+        // All seven endpoints now return { members, rows: [...] } (event-counts
+        // returns { members, cameraByDevice, clipboardByDevice, ... }).
+        // Members list is identical across endpoints — we take it from
+        // whichever responded first.
+        let nextMembers: Member[] | null = null;
+        const accept = (m: Member[] | undefined) => {
+          if (!nextMembers && m) nextMembers = m;
+        };
+
+        if (timelineRes.ok) {
+          const j = await timelineRes.json();
+          accept(j.members);
+          setTimeline(j.rows ?? []);
+        }
+        if (vitalsRes.ok) {
+          const j = await vitalsRes.json();
+          accept(j.members);
+          setVitals(j.rows ?? []);
+        }
+        if (sensorsRes.ok) {
+          const j = await sensorsRes.json();
+          accept(j.members);
+          setSensors(j.rows ?? []);
+        }
+        if (crashesRes.ok) {
+          const j = await crashesRes.json();
+          accept(j.members);
+          setCrashes(j.rows ?? []);
+        }
+        if (appUsageRes.ok) {
+          const j = await appUsageRes.json();
+          accept(j.members);
+          setAppUsage(j.rows ?? []);
+        }
+        if (eventCountsRes.ok) {
+          const j = await eventCountsRes.json();
+          accept(j.members);
+          setCameraByDevice(j.cameraByDevice ?? []);
+          setClipboardByDevice(j.clipboardByDevice ?? []);
+        }
+        if (tamperRes.ok) {
+          const j = await tamperRes.json();
+          accept(j.members);
+          setTamper(j.rows ?? []);
+        }
+
+        if (nextMembers) setMembers(nextMembers);
       } catch {}
       setLoading(false);
     }
@@ -114,23 +169,113 @@ export default function TeamDetailPage() {
     };
   }, [hackathonId, teamId, fetchScreenshots, hasPending]);
 
-  const totals = timeline.reduce(
+  // deviceId -> "Member N: Name" for chips on Tamper / Crash rows.
+  const memberLabelByDevice = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const mem of members) {
+      m.set(mem.deviceId, `Member ${mem.slot}: ${mem.memberName}`);
+    }
+    return m;
+  }, [members]);
+
+  const labelFor = useCallback(
+    (deviceId: string | null | undefined) =>
+      deviceId ? memberLabelByDevice.get(deviceId) ?? null : null,
+    [memberLabelByDevice]
+  );
+
+  const matchDevice = useCallback(
+    (deviceId: string | null | undefined) => {
+      if (selectedDevice === ALL_DEVICES) return true;
+      return deviceId === selectedDevice;
+    },
+    [selectedDevice]
+  );
+
+  const filteredTimeline = useMemo(
+    () => timeline.filter((e) => matchDevice(e.deviceId)),
+    [timeline, matchDevice]
+  );
+  const filteredVitals = useMemo(
+    () => vitals.filter((v) => matchDevice(v.deviceId)),
+    [vitals, matchDevice]
+  );
+  const filteredSensors = useMemo(
+    () => sensors.filter((s) => matchDevice(s.deviceId)),
+    [sensors, matchDevice]
+  );
+  const filteredAppUsage = useMemo(() => {
+    if (selectedDevice === ALL_DEVICES) {
+      // Collapse the per-(device, package) rows into per-package totals.
+      const out = new Map<string, AppUsageRow>();
+      for (const row of appUsage) {
+        const existing = out.get(row.appPackage);
+        if (existing) {
+          existing.foregroundMinutes += row.foregroundMinutes;
+          existing.appLabel = existing.appLabel ?? row.appLabel;
+        } else {
+          out.set(row.appPackage, { ...row, deviceId: null });
+        }
+      }
+      return Array.from(out.values()).sort(
+        (a, b) => b.foregroundMinutes - a.foregroundMinutes
+      );
+    }
+    return appUsage.filter((r) => matchDevice(r.deviceId));
+  }, [appUsage, matchDevice, selectedDevice]);
+  const filteredCameraOpens = useMemo(() => {
+    if (selectedDevice === ALL_DEVICES)
+      return cameraByDevice.reduce((s, r) => s + r.count, 0);
+    return cameraByDevice
+      .filter((r) => r.deviceId === selectedDevice)
+      .reduce((s, r) => s + r.count, 0);
+  }, [cameraByDevice, selectedDevice]);
+  const filteredClipboardEvents = useMemo(() => {
+    if (selectedDevice === ALL_DEVICES)
+      return clipboardByDevice.reduce((s, r) => s + r.count, 0);
+    return clipboardByDevice
+      .filter((r) => r.deviceId === selectedDevice)
+      .reduce((s, r) => s + r.count, 0);
+  }, [clipboardByDevice, selectedDevice]);
+  const filteredCrashes = useMemo(
+    () =>
+      crashes
+        .filter((c) => matchDevice(c.deviceId))
+        .map((c) => ({ ...c, memberLabel: labelFor(c.deviceId) })),
+    [crashes, matchDevice, labelFor]
+  );
+  const filteredTamper = useMemo(
+    () =>
+      tamper
+        .filter((t) => matchDevice(t.deviceId))
+        .map((t) => ({ ...t, memberLabel: labelFor(t.deviceId) })),
+    [tamper, matchDevice, labelFor]
+  );
+
+  const totals = filteredTimeline.reduce(
     (acc, entry) => ({
       total_taps: acc.total_taps + (entry.taps ?? 0),
       total_text_inputs: acc.total_text_inputs + (entry.textInputs ?? 0),
       total_scrolls: acc.total_scrolls + (entry.scrolls ?? 0),
       total_app_switches: acc.total_app_switches + (entry.appSwitches ?? 0),
-      total_keyboard_seconds: acc.total_keyboard_seconds + (entry.keyboardActiveSeconds ?? 0),
-      total_office_kit_seconds: acc.total_office_kit_seconds + (entry.officeKitSeconds ?? 0),
+      total_keyboard_seconds:
+        acc.total_keyboard_seconds + (entry.keyboardActiveSeconds ?? 0),
+      total_office_kit_seconds:
+        acc.total_office_kit_seconds + (entry.officeKitSeconds ?? 0),
     }),
-    { total_taps: 0, total_text_inputs: 0, total_scrolls: 0, total_app_switches: 0, total_keyboard_seconds: 0, total_office_kit_seconds: 0 }
+    {
+      total_taps: 0,
+      total_text_inputs: 0,
+      total_scrolls: 0,
+      total_app_switches: 0,
+      total_keyboard_seconds: 0,
+      total_office_kit_seconds: 0,
+    }
   );
 
-  // Real per-app foreground minutes from the UsageStats snapshots (app_usage).
-  // Falls back to the coarse foregroundApp-per-batch sampling if UsageStats
-  // hasn't populated yet (e.g. Usage Access not granted).
+  // Fallback per-app minutes when UsageStats isn't populating (no permission).
   const fallbackAppMinutes = new Map<string, number>();
-  for (const entry of timeline) {
+  for (const entry of filteredTimeline) {
     if (entry.foregroundApp) {
       fallbackAppMinutes.set(
         entry.foregroundApp,
@@ -139,8 +284,8 @@ export default function TeamDetailPage() {
     }
   }
   const appUsageData =
-    appUsage.length > 0
-      ? appUsage
+    filteredAppUsage.length > 0
+      ? filteredAppUsage
       : Array.from(fallbackAppMinutes.entries())
           .map(([pkg, minutes]) => ({
             appPackage: pkg,
@@ -183,13 +328,44 @@ export default function TeamDetailPage() {
       </header>
 
       <main className="max-w-7xl mx-auto px-6 py-10 space-y-12">
+        {/* Member tab strip: Team | Member 1: Name | Member 2: Name ... */}
+        {members.length > 0 && (
+          <div className="flex items-center gap-2 bg-black/5 dark:bg-white/5 p-1.5 rounded-2xl overflow-x-auto">
+            <button
+              type="button"
+              onClick={() => setSelectedDevice(ALL_DEVICES)}
+              className={`px-4 py-2 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all duration-300 whitespace-nowrap ${
+                selectedDevice === ALL_DEVICES
+                  ? "bg-primary text-black shadow-lg shadow-primary/20"
+                  : "text-gray-500 hover:text-black dark:hover:text-primary"
+              }`}
+            >
+              Team ({members.length})
+            </button>
+            {members.map((m) => (
+              <button
+                key={m.deviceId}
+                type="button"
+                onClick={() => setSelectedDevice(m.deviceId)}
+                className={`px-4 py-2 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all duration-300 whitespace-nowrap ${
+                  selectedDevice === m.deviceId
+                    ? "bg-primary text-black shadow-lg shadow-primary/20"
+                    : "text-gray-500 hover:text-black dark:hover:text-primary"
+                }`}
+              >
+                Member {m.slot}: {m.memberName}
+              </button>
+            ))}
+          </div>
+        )}
+
         <div className="flex items-center gap-2 bg-black/5 dark:bg-white/5 p-1.5 rounded-2xl w-fit">
           {(
             [
               ["overview", "Overview"],
               ["screenshots", `Screenshots${screenshots.length > 0 ? ` (${screenshots.length})` : ""}`],
-              ["crashes", `Crash log${crashes.length > 0 ? ` (${crashes.length})` : ""}`],
-              ["tamper", `Tamper${tamper.length > 0 ? ` (${tamper.length})` : ""}`],
+              ["crashes", `Crash log${filteredCrashes.length > 0 ? ` (${filteredCrashes.length})` : ""}`],
+              ["tamper", `Tamper${filteredTamper.length > 0 ? ` (${filteredTamper.length})` : ""}`],
             ] as const
           ).map(([key, label]) => (
             <button
@@ -215,8 +391,8 @@ export default function TeamDetailPage() {
                 total_office_kit_minutes: Math.round(
                   totals.total_office_kit_seconds / 60
                 ),
-                total_camera_opens: eventCounts.cameraOpens,
-                total_clipboard_events: eventCounts.clipboardEvents,
+                total_camera_opens: filteredCameraOpens,
+                total_clipboard_events: filteredClipboardEvents,
               }}
             />
 
@@ -227,7 +403,7 @@ export default function TeamDetailPage() {
                   <span className="h-px flex-1 bg-black/5 dark:bg-white/5 ml-4"></span>
                 </div>
                 <div className="bg-white dark:bg-white/5 rounded-[2rem] border border-black/5 dark:border-white/5 p-8 shadow-2xl">
-                  <TapTimelineChart data={timeline} />
+                  <TapTimelineChart data={filteredTimeline} />
                 </div>
               </section>
 
@@ -247,7 +423,7 @@ export default function TeamDetailPage() {
                 <h2 className="text-xs font-black uppercase tracking-[0.2em] text-gray-400">Sensors</h2>
                 <span className="h-px flex-1 bg-black/5 dark:bg-white/5 ml-4"></span>
               </div>
-              <SensorPanels data={sensors} />
+              <SensorPanels data={filteredSensors} />
             </section>
 
             <section>
@@ -256,7 +432,7 @@ export default function TeamDetailPage() {
                 <span className="h-px flex-1 bg-black/5 dark:bg-white/5 ml-4"></span>
               </div>
               <div className="bg-white dark:bg-white/5 rounded-3xl border border-black/5 dark:border-white/5 p-6 shadow-xl">
-                <VitalsChart data={vitals} />
+                <VitalsChart data={filteredVitals} />
               </div>
             </section>
           </div>
@@ -278,7 +454,7 @@ export default function TeamDetailPage() {
               <h2 className="text-xs font-black uppercase tracking-[0.2em] text-gray-400">Crash log</h2>
               <span className="h-px flex-1 bg-black/5 dark:bg-white/5 ml-4"></span>
             </div>
-            <CrashLogList entries={crashes} />
+            <CrashLogList entries={filteredCrashes} />
           </section>
         )}
 
@@ -288,7 +464,7 @@ export default function TeamDetailPage() {
               <h2 className="text-xs font-black uppercase tracking-[0.2em] text-gray-400">Tamper events</h2>
               <span className="h-px flex-1 bg-black/5 dark:bg-white/5 ml-4"></span>
             </div>
-            <TamperList entries={tamper} />
+            <TamperList entries={filteredTamper} />
           </section>
         )}
       </main>

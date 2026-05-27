@@ -27,21 +27,35 @@ class TrackingRepository(private val context: Context) {
 
     private fun api() = ApiClient.getService(session.apiUrl)
 
-    suspend fun registerDevice(): Boolean {
-        if (!session.isConfigured) return false
+    suspend fun registerDevice(): RegisterResult {
+        if (!session.isConfigured) return RegisterResult.Failure
         return try {
             val response = api().registerDevice(
                 DeviceRegistrationDto(
                     deviceId = session.deviceId,
                     hackathonId = session.hackathonId,
                     teamId = session.teamId,
-                    teamName = session.teamName
+                    teamName = session.teamName,
+                    memberSlot = session.memberSlot,
+                    memberName = session.memberName,
                 )
             )
-            response.isSuccessful
+            when {
+                response.isSuccessful -> RegisterResult.Success
+                // Server returns 409 when another phone already claimed the slot.
+                // Setup surfaces this so the participant can pick a different slot.
+                response.code() == 409 -> RegisterResult.SlotConflict(session.memberSlot)
+                else -> RegisterResult.Failure
+            }
         } catch (_: Exception) {
-            false
+            RegisterResult.Failure
         }
+    }
+
+    sealed class RegisterResult {
+        object Success : RegisterResult()
+        data class SlotConflict(val slot: Int) : RegisterResult()
+        object Failure : RegisterResult()
     }
 
     suspend fun saveEventBatch(

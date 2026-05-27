@@ -7,6 +7,7 @@ import {
   timestamp,
   jsonb,
   index,
+  uniqueIndex,
   boolean,
 } from "drizzle-orm/pg-core";
 
@@ -50,6 +51,36 @@ export const teams = pgTable("teams", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
 
+// One row per phone registered against a team. A team has up to N members,
+// each with their own device. The slot (1, 2, 3...) is the display ordinal
+// and is unique within a team; the member_name is free-form for "Member 1: Saija".
+// device_id is Settings.Secure.ANDROID_ID — also the partition key for
+// telemetry tables (event_batches, device_vitals, etc.), so this table is the
+// lookup that turns a per-device telemetry row into a named member.
+export const teamMembers = pgTable(
+  "team_members",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    teamId: text("team_id")
+      .references(() => teams.id)
+      .notNull(),
+    hackathonId: text("hackathon_id")
+      .references(() => hackathons.id)
+      .notNull(),
+    deviceId: text("device_id").notNull(),
+    slot: integer("slot").notNull(),
+    memberName: text("member_name").notNull(),
+    registeredAt: timestamp("registered_at", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (t) => [
+    uniqueIndex("uq_team_members_team_slot").on(t.teamId, t.slot),
+    uniqueIndex("uq_team_members_team_device").on(t.teamId, t.deviceId),
+    index("idx_team_members_team").on(t.teamId),
+  ]
+);
+
 export const eventBatches = pgTable(
   "event_batches",
   {
@@ -89,6 +120,9 @@ export const appUsage = pgTable(
     hackathonId: text("hackathon_id")
       .references(() => hackathons.id)
       .notNull(),
+    // Nullable for back-compat with snapshots inserted before multi-phone teams
+    // landed. New writes populate it; team-detail per-member view filters on it.
+    deviceId: text("device_id"),
     snapshotTime: timestamp("snapshot_time", { withTimezone: true }).notNull(),
     appPackage: text("app_package").notNull(),
     appLabel: text("app_label"),
@@ -106,6 +140,7 @@ export const cameraEvents = pgTable("camera_events", {
   hackathonId: text("hackathon_id")
     .references(() => hackathons.id)
     .notNull(),
+  deviceId: text("device_id"), // nullable for back-compat
   eventTime: timestamp("event_time", { withTimezone: true }).notNull(),
   eventType: text("event_type").default("camera_open"),
 });
@@ -118,6 +153,7 @@ export const clipboardEvents = pgTable("clipboard_events", {
   hackathonId: text("hackathon_id")
     .references(() => hackathons.id)
     .notNull(),
+  deviceId: text("device_id"), // nullable for back-compat
   eventTime: timestamp("event_time", { withTimezone: true }).notNull(),
 });
 
@@ -157,6 +193,11 @@ export const deviceVitals = pgTable(
     hackathonId: text("hackathon_id")
       .references(() => hackathons.id)
       .notNull(),
+    // Nullable for back-compat with rows inserted before multi-phone teams
+    // landed. The leaderboard partitions vitals by (teamId, deviceId) to
+    // avoid phantom compile spikes from interleaved phones — see
+    // deriveVitalsPerTeam in /api/hackathon/[id]/leaderboard.
+    deviceId: text("device_id"),
     recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull(),
     batteryLevel: integer("battery_level"),
     temperature: real("temperature"), // celsius
@@ -290,6 +331,7 @@ export const tamperEvents = pgTable(
     hackathonId: text("hackathon_id")
       .references(() => hackathons.id)
       .notNull(),
+    deviceId: text("device_id"), // nullable for back-compat; new writes populate
     // settings_page_open | adb_toggled | time_drift | safe_mode_boot |
     // package_added | package_removed | lock_task_engaged | ...future
     type: text("type").notNull(),
@@ -315,6 +357,7 @@ export const crashLogs = pgTable(
     hackathonId: text("hackathon_id")
       .references(() => hackathons.id)
       .notNull(),
+    deviceId: text("device_id"), // nullable for back-compat; new writes populate
     occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
     threadName: text("thread_name"),
     stacktrace: text("stacktrace"),

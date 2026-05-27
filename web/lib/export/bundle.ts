@@ -17,6 +17,7 @@ import { db } from "@/lib/db";
 import {
   hackathons,
   teams,
+  teamMembers,
   eventBatches,
   appUsage,
   deviceVitals,
@@ -62,6 +63,7 @@ const THERMAL_STATUS_SEVERE = 4;
 
 interface VitalRow {
   teamId: string;
+  deviceId: string | null;
   recordedAt: Date | null;
   cpuUsage: number | null;
   batteryLevel: number | null;
@@ -78,69 +80,109 @@ interface VitalsDerived {
   monsterModeMinutes: number;
 }
 
-// Duplicated from leaderboard route — see file header comment.
+// Duplicated from leaderboard route — they MUST stay in sync.
+// Multi-phone teams: walk per (team, device) so CPU/battery deltas only
+// compare consecutive samples from the same phone, then fold into team totals.
+// Rows MUST be ordered by (teamId asc, deviceId asc, recordedAt asc).
 function deriveVitalsPerTeam(rows: VitalRow[]): Map<string, VitalsDerived> {
   const out = new Map<string, VitalsDerived>();
+
   let team: string | null = null;
+  let device: string | null = null;
+
   let prevCpu: number | null = null;
   let prevBattery: number | null = null;
-  let firstTs = 0;
-  let lastTs = 0;
-  let spikes = 0;
-  let drained = 0;
-  let maxHeadroom = 0;
-  let redline = 0;
-  const monsterMinutes = new Set<number>();
+  let deviceFirstTs = 0;
+  let deviceLastTs = 0;
+  let deviceSpikes = 0;
+  let deviceDrained = 0;
 
-  const flush = () => {
+  let teamSpikes = 0;
+  let teamDrained = 0;
+  let teamObservedMs = 0;
+  let teamMaxHeadroom = 0;
+  let teamRedline = 0;
+  let teamMonsterMinutes = new Set<number>();
+
+  const foldDevice = () => {
+    if (device === null) return;
+    teamSpikes += deviceSpikes;
+    teamDrained += deviceDrained;
+    if (deviceLastTs > deviceFirstTs) {
+      teamObservedMs += deviceLastTs - deviceFirstTs;
+    }
+  };
+
+  const flushTeam = () => {
     if (team === null) return;
-    const hours = lastTs > firstTs ? (lastTs - firstTs) / 3_600_000 : 0;
+    foldDevice();
+    const hours = teamObservedMs / 3_600_000;
     out.set(team, {
-      compileSpikes: spikes,
-      batteryDrainRate: hours > 0 ? drained / hours : 0,
-      thermalHeadroom: maxHeadroom,
-      hardwareRedline: redline,
-      monsterModeMinutes: monsterMinutes.size,
+      compileSpikes: teamSpikes,
+      batteryDrainRate: hours > 0 ? teamDrained / hours : 0,
+      thermalHeadroom: teamMaxHeadroom,
+      hardwareRedline: teamRedline,
+      monsterModeMinutes: teamMonsterMinutes.size,
     });
   };
 
+  const startDevice = (newDeviceKey: string, firstTs: number) => {
+    prevCpu = null;
+    prevBattery = null;
+    deviceFirstTs = firstTs;
+    deviceLastTs = firstTs;
+    deviceSpikes = 0;
+    deviceDrained = 0;
+    device = newDeviceKey;
+  };
+
+  const startTeam = (newTeam: string) => {
+    teamSpikes = 0;
+    teamDrained = 0;
+    teamObservedMs = 0;
+    teamMaxHeadroom = 0;
+    teamRedline = 0;
+    teamMonsterMinutes = new Set<number>();
+    team = newTeam;
+    device = null;
+  };
+
   for (const r of rows) {
-    if (r.teamId !== team) {
-      flush();
-      team = r.teamId;
-      prevCpu = null;
-      prevBattery = null;
-      firstTs = r.recordedAt ? new Date(r.recordedAt).getTime() : 0;
-      lastTs = firstTs;
-      spikes = 0;
-      drained = 0;
-      maxHeadroom = 0;
-      redline = 0;
-      monsterMinutes.clear();
-    }
     const ts = r.recordedAt ? new Date(r.recordedAt).getTime() : 0;
-    if (ts) lastTs = ts;
+    const rowDevice = r.deviceId ?? `__nodevice__`;
+
+    if (r.teamId !== team) {
+      flushTeam();
+      startTeam(r.teamId);
+      startDevice(rowDevice, ts);
+    } else if (rowDevice !== device) {
+      foldDevice();
+      startDevice(rowDevice, ts);
+    }
+
+    if (ts) deviceLastTs = ts;
+
     if (r.cpuUsage != null) {
-      if (prevCpu != null && r.cpuUsage - prevCpu > COMPILE_SPIKE_DELTA) spikes++;
+      if (prevCpu != null && r.cpuUsage - prevCpu > COMPILE_SPIKE_DELTA) deviceSpikes++;
       prevCpu = r.cpuUsage;
     }
     if (r.batteryLevel != null) {
       if (prevBattery != null && prevBattery > r.batteryLevel) {
-        drained += prevBattery - r.batteryLevel;
+        deviceDrained += prevBattery - r.batteryLevel;
       }
       prevBattery = r.batteryLevel;
     }
-    if (r.thermalHeadroom != null && r.thermalHeadroom > maxHeadroom) {
-      maxHeadroom = r.thermalHeadroom;
+    if (r.thermalHeadroom != null && r.thermalHeadroom > teamMaxHeadroom) {
+      teamMaxHeadroom = r.thermalHeadroom;
     }
     if (r.thermalStatus != null && r.thermalStatus >= THERMAL_STATUS_SEVERE) {
-      redline++;
+      teamRedline++;
     }
     if (r.monsterMode === true && ts) {
-      monsterMinutes.add(Math.floor(ts / 60_000));
+      teamMonsterMinutes.add(Math.floor(ts / 60_000));
     }
   }
-  flush();
+  flushTeam();
   return out;
 }
 
@@ -190,20 +232,14 @@ function coercePerAppTaps(v: unknown): Record<string, number> | null {
   return Object.keys(out).length === 0 ? null : out;
 }
 
-function coerceMembers(v: unknown): Array<{ name: string; role?: string }> | null {
-  if (!Array.isArray(v)) return null;
-  const out: Array<{ name: string; role?: string }> = [];
-  for (const m of v) {
-    if (m && typeof m === "object" && typeof (m as { name?: unknown }).name === "string") {
-      const entry: { name: string; role?: string } = {
-        name: (m as { name: string }).name,
-      };
-      const role = (m as { role?: unknown }).role;
-      if (typeof role === "string") entry.role = role;
-      out.push(entry);
-    }
-  }
-  return out.length === 0 ? null : out;
+function membersFromTable(
+  rows: Array<{ slot: number; memberName: string }>
+): Array<{ name: string; role?: string }> | null {
+  if (rows.length === 0) return null;
+  return rows
+    .slice()
+    .sort((a, b) => a.slot - b.slot)
+    .map((m) => ({ name: `Member ${m.slot}: ${m.memberName}` }));
 }
 
 function coerceTargetTeamIds(v: unknown): string[] | null {
@@ -239,6 +275,7 @@ async function mapWithConcurrency<T, U>(
 
 interface TeamSlice {
   teamRow: typeof teams.$inferSelect;
+  memberRows: Array<{ slot: number; memberName: string }>;
   heartbeat: typeof heartbeats.$inferSelect | undefined;
   timelineRows: Array<typeof eventBatches.$inferSelect>;
   appUsageRows: Array<typeof appUsage.$inferSelect>;
@@ -407,7 +444,7 @@ function assembleTeamBundle(
       id: teamRow.id,
       name: teamRow.name,
       deviceId: teamRow.deviceId ?? null,
-      members: coerceMembers(teamRow.members),
+      members: membersFromTable(slice.memberRows),
       createdAt: isoOrNull(teamRow.createdAt),
     },
     status: slice.status,
@@ -525,6 +562,7 @@ export async function gatherTeamBundle(teamId: string): Promise<TeamBundle | nul
     cameraCountRows,
     clipboardCountRows,
     vitalTicks,
+    memberRows,
   ] = await Promise.all([
     db.select().from(eventBatches).where(eq(eventBatches.teamId, teamId)),
     db.select().from(appUsage).where(eq(appUsage.teamId, teamId)),
@@ -532,7 +570,7 @@ export async function gatherTeamBundle(teamId: string): Promise<TeamBundle | nul
       .select()
       .from(deviceVitals)
       .where(eq(deviceVitals.teamId, teamId))
-      .orderBy(asc(deviceVitals.recordedAt)),
+      .orderBy(asc(deviceVitals.deviceId), asc(deviceVitals.recordedAt)),
     db.select().from(sensorAggregates).where(eq(sensorAggregates.teamId, teamId)),
     db.select().from(crashLogs).where(eq(crashLogs.teamId, teamId)),
     db.select().from(tamperEvents).where(eq(tamperEvents.teamId, teamId)),
@@ -556,6 +594,10 @@ export async function gatherTeamBundle(teamId: string): Promise<TeamBundle | nul
       .from(deviceVitals)
       .where(eq(deviceVitals.teamId, teamId))
       .orderBy(asc(deviceVitals.recordedAt)),
+    db
+      .select({ slot: teamMembers.slot, memberName: teamMembers.memberName })
+      .from(teamMembers)
+      .where(eq(teamMembers.teamId, teamId)),
   ]);
 
   const heartbeat = heartbeatRows
@@ -575,6 +617,7 @@ export async function gatherTeamBundle(teamId: string): Promise<TeamBundle | nul
   return assembleTeamBundle(
     {
       teamRow,
+      memberRows,
       heartbeat,
       timelineRows,
       appUsageRows,
@@ -633,6 +676,7 @@ export async function gatherHackathonBundle(
     lightRows,
     notificationRows,
     idleWarningRows,
+    memberRows,
   ] = await Promise.all([
     db.select().from(teams).where(eq(teams.hackathonId, hackathonId)),
     db.select().from(eventBatches).where(eq(eventBatches.hackathonId, hackathonId)),
@@ -641,7 +685,11 @@ export async function gatherHackathonBundle(
       .select()
       .from(deviceVitals)
       .where(eq(deviceVitals.hackathonId, hackathonId))
-      .orderBy(asc(deviceVitals.teamId), asc(deviceVitals.recordedAt)),
+      .orderBy(
+        asc(deviceVitals.teamId),
+        asc(deviceVitals.deviceId),
+        asc(deviceVitals.recordedAt)
+      ),
     db
       .select()
       .from(sensorAggregates)
@@ -703,6 +751,14 @@ export async function gatherHackathonBundle(
         )
       )
       .groupBy(organiserAlerts.teamId),
+    db
+      .select({
+        teamId: teamMembers.teamId,
+        slot: teamMembers.slot,
+        memberName: teamMembers.memberName,
+      })
+      .from(teamMembers)
+      .where(eq(teamMembers.hackathonId, hackathonId)),
   ]);
 
   // Bucket every row by teamId.
@@ -727,6 +783,13 @@ export async function gatherHackathonBundle(
   const clipboardCountMap = new Map(clipboardCountRows.map((r) => [r.teamId, r.count]));
   const idleWarningMap = new Map(idleWarningRows.map((r) => [r.teamId, r.count]));
 
+  const membersByTeam = new Map<string, Array<{ slot: number; memberName: string }>>();
+  for (const m of memberRows) {
+    const list = membersByTeam.get(m.teamId) ?? [];
+    list.push({ slot: m.slot, memberName: m.memberName });
+    membersByTeam.set(m.teamId, list);
+  }
+
   // Latest heartbeat per team.
   const heartbeatByTeam = new Map<string, typeof heartbeatRows[number]>();
   for (const h of heartbeatRows) {
@@ -743,6 +806,7 @@ export async function gatherHackathonBundle(
   const vitalsDerivedByTeam = deriveVitalsPerTeam(
     vitalsRows.map((v) => ({
       teamId: v.teamId,
+      deviceId: v.deviceId,
       recordedAt: v.recordedAt,
       cpuUsage: v.cpuUsage,
       batteryLevel: v.batteryLevel,
@@ -812,6 +876,7 @@ export async function gatherHackathonBundle(
     return assembleTeamBundle(
       {
         teamRow,
+        memberRows: membersByTeam.get(teamRow.id) ?? [],
         heartbeat: hb,
         timelineRows: timelineByTeam.get(teamRow.id) ?? [],
         appUsageRows: appUsageByTeam.get(teamRow.id) ?? [],
