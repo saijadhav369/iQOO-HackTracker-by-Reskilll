@@ -196,14 +196,42 @@ export default function TeamDetailPage() {
     () => timeline.filter((e) => matchDevice(e.deviceId)),
     [timeline, matchDevice]
   );
+  // On TEAM tab with multiple phones the chart line zigzags between devices
+  // (e.g. iQOO at 56% and emulator at 100% on the same axis). Restrict to the
+  // primary member (slot 1) so the chart is readable; the banner above tells
+  // the organiser to switch tabs for other members. Single-phone teams keep
+  // the unfiltered behaviour.
+  const primaryDeviceId = useMemo(() => {
+    if (selectedDevice !== ALL_DEVICES) return selectedDevice;
+    if (members.length <= 1) return members[0]?.deviceId ?? null;
+    return [...members].sort((a, b) => a.slot - b.slot)[0]?.deviceId ?? null;
+  }, [selectedDevice, members]);
+
+  const vitalsCollapsedToPrimary =
+    selectedDevice === ALL_DEVICES && members.length > 1;
+
   const filteredVitals = useMemo(
-    () => vitals.filter((v) => matchDevice(v.deviceId)),
-    [vitals, matchDevice]
+    () =>
+      vitalsCollapsedToPrimary
+        ? vitals.filter((v) => v.deviceId === primaryDeviceId)
+        : vitals.filter((v) => matchDevice(v.deviceId)),
+    [vitals, matchDevice, vitalsCollapsedToPrimary, primaryDeviceId]
   );
   const filteredSensors = useMemo(
-    () => sensors.filter((s) => matchDevice(s.deviceId)),
-    [sensors, matchDevice]
+    () =>
+      vitalsCollapsedToPrimary
+        ? sensors.filter((s) => s.deviceId === primaryDeviceId)
+        : sensors.filter((s) => matchDevice(s.deviceId)),
+    [sensors, matchDevice, vitalsCollapsedToPrimary, primaryDeviceId]
   );
+
+  // Name of the member whose data is currently driving the chart — only used
+  // for the banner that explains the collapse.
+  const primaryMemberLabel = useMemo(() => {
+    if (!vitalsCollapsedToPrimary || !primaryDeviceId) return null;
+    const m = members.find((mm) => mm.deviceId === primaryDeviceId);
+    return m ? `Member ${m.slot}: ${m.memberName}` : null;
+  }, [vitalsCollapsedToPrimary, primaryDeviceId, members]);
   const filteredAppUsage = useMemo(() => {
     if (selectedDevice === ALL_DEVICES) {
       // Collapse the per-(device, package) rows into per-package totals.
@@ -431,6 +459,11 @@ export default function TeamDetailPage() {
                 <h2 className="text-xs font-black uppercase tracking-[0.2em] text-gray-400">Device Vitals</h2>
                 <span className="h-px flex-1 bg-black/5 dark:bg-white/5 ml-4"></span>
               </div>
+              {primaryMemberLabel && (
+                <div className="mb-4 rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 text-[10px] font-black uppercase tracking-widest text-primary/90">
+                  Showing vitals for {primaryMemberLabel}. Switch to another member's tab above to see their device.
+                </div>
+              )}
               <div className="bg-white dark:bg-white/5 rounded-3xl border border-black/5 dark:border-white/5 p-6 shadow-xl">
                 <VitalsChart data={filteredVitals} />
               </div>
