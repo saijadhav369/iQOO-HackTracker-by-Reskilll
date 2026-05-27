@@ -100,9 +100,11 @@ export default function TeamCard({ hackathonId, team, idleWarning }: TeamCardPro
       href={`/dashboard/${hackathonId}/team/${team.team_id}`}
       className={`block rounded-2xl border-2 ${borderClass} bg-white dark:bg-black/40 backdrop-blur-sm p-6 transition-all duration-300 hover:shadow-2xl hover:-translate-y-1`}
     >
-      <div className="flex items-center justify-between mb-6 gap-2">
-        <h3 className="font-black text-xl uppercase tracking-tighter leading-tight">{team.team_name}</h3>
-        <div className="flex items-center gap-2 shrink-0">
+      <div className="mb-6">
+        <h3 className="font-black text-xl uppercase tracking-tighter leading-tight break-words">
+          {team.team_name}
+        </h3>
+        <div className="flex items-center gap-2 mt-2 flex-wrap">
           {memberCount > 0 && (
             <span
               className={`px-2 py-1 rounded-md text-[10px] font-black uppercase tracking-widest ${
