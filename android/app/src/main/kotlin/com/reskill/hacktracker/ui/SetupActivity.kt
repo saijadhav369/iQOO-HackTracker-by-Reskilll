@@ -259,6 +259,44 @@ class SetupActivity : AppCompatActivity() {
     }
 
     /**
+     * Normalize the API URL the organiser typed. Two corrections:
+     *   1. If there's no scheme, default to http:// for private IPs / localhost
+     *      (LAN dev servers) and https:// otherwise.
+     *   2. If the scheme is https:// but the host is a private IP / localhost,
+     *      downgrade to http:// — dev servers (e.g. `pnpm dev` on a LAN box)
+     *      can't terminate TLS, and the resulting "Unable to parse TLS packet
+     *      header" error is opaque to the organiser. Public hostnames keep
+     *      whatever scheme was typed.
+     */
+    private fun normalizeApiUrl(input: String): String {
+        var url = input.trim().trimEnd('/')
+        if (url.isEmpty()) return url
+        val hasScheme = url.startsWith("http://") || url.startsWith("https://")
+        val hostPlusPath = if (hasScheme) url.removePrefix("https://").removePrefix("http://") else url
+        val host = hostPlusPath.substringBefore('/').substringBefore(':')
+        val isPrivate = isPrivateOrLocalhostHost(host)
+        return when {
+            !hasScheme -> if (isPrivate) "http://$url" else "https://$url"
+            url.startsWith("https://") && isPrivate -> "http://$hostPlusPath"
+            else -> url
+        }
+    }
+
+    private fun isPrivateOrLocalhostHost(host: String): Boolean {
+        if (host.isBlank()) return false
+        if (host == "localhost") return true
+        if (host.startsWith("127.")) return true
+        if (host.startsWith("10.")) return true
+        if (host.startsWith("192.168.")) return true
+        // 172.16.0.0 – 172.31.255.255
+        if (host.startsWith("172.")) {
+            val second = host.substringAfter("172.").substringBefore('.').toIntOrNull()
+            if (second != null && second in 16..31) return true
+        }
+        return false
+    }
+
+    /**
      * Fetch the registered teams for the current hackathon and populate the
      * dropdown adapter. Safe to call any number of times — replaces the
      * adapter on each successful response. `showToast=true` reports the
@@ -266,7 +304,12 @@ class SetupActivity : AppCompatActivity() {
      * the keyboard's Done action so the organiser gets explicit feedback.
      */
     private fun refreshTeamDropdown(showToast: Boolean = false) {
-        val apiUrl = apiUrlInput.text.toString().trim()
+        val typedUrl = apiUrlInput.text.toString().trim()
+        val apiUrl = normalizeApiUrl(typedUrl)
+        // If normalization rewrote the URL (e.g. https://10.x → http://10.x),
+        // reflect the correction in the input so the organiser sees what's
+        // actually being used and the saved session.apiUrl matches.
+        if (apiUrl != typedUrl) apiUrlInput.setText(apiUrl)
         val hackathonId = hackathonIdInput.text.toString().trim()
         if (apiUrl.isBlank() || hackathonId.isBlank()) {
             if (showToast) {
@@ -428,7 +471,9 @@ class SetupActivity : AppCompatActivity() {
     }
 
     private fun saveAndStart() {
-        val apiUrl = apiUrlInput.text.toString().trim()
+        val typedUrl = apiUrlInput.text.toString().trim()
+        val apiUrl = normalizeApiUrl(typedUrl)
+        if (apiUrl != typedUrl) apiUrlInput.setText(apiUrl)
         val hackathonId = hackathonIdInput.text.toString().trim()
         val memberName = memberNameInput.text.toString().trim()
         val passcode = passcodeSetInput.text.toString().trim()
