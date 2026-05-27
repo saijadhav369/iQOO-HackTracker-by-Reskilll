@@ -111,9 +111,12 @@ export async function POST(
 
     const { id } = await params;
 
+    // Freeze the real-world end time so the manage-page counter locks at the
+    // total elapsed once the organiser ends the run. Pairs with the start
+    // route's `startTime = now()` write.
     const [updated] = await db
       .update(hackathons)
-      .set({ status: "ended" })
+      .set({ status: "ended", endTime: new Date() })
       .where(eq(hackathons.id, id))
       .returning();
 

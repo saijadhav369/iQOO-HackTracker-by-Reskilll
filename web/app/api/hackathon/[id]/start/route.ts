@@ -17,9 +17,13 @@ export async function POST(
 
     const { id } = await params;
 
+    // Stamp the real-world start time. The planned start_time from the create
+    // form is replaced here so the manage-page elapsed counter reflects when
+    // the organiser actually pressed the button, not the scheduled time. The
+    // counter survives browser refreshes because this lives in the DB.
     const [updated] = await db
       .update(hackathons)
-      .set({ status: "active" })
+      .set({ status: "active", startTime: new Date() })
       .where(eq(hackathons.id, id))
       .returning();
 
