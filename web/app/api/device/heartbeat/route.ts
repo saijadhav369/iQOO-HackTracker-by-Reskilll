@@ -29,9 +29,16 @@ export async function POST(req: NextRequest) {
     const cleanExit = data.clean_exit ?? true;
 
     if (existing.length > 0) {
+      // CRITICAL: also refresh team_id. The lookup keys by (device_id,
+      // hackathon_id), but a phone can move between teams across re-
+      // provisionings in the same hackathon. Without this update, the
+      // heartbeats row keeps its first team_id forever and the live grid's
+      // per-member lookup (`${teamId} ${deviceId}` key) silently misses the
+      // current team's members — symptom is "0/2 ONLINE" with status=active.
       await db
         .update(heartbeats)
         .set({
+          teamId: data.team_id,
           lastSeen: now,
           batteryLevel: data.battery_level ?? null,
           temperature: data.temperature ?? null,
