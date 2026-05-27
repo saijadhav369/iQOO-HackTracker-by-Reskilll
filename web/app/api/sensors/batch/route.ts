@@ -31,11 +31,19 @@ export async function POST(req: NextRequest) {
       stepsDelta: a.steps_delta ?? null,
     }));
 
+    // Dedupe key (team_id, device_id, period_start). With multi-phone teams
+    // two devices naturally produce sensor windows with the same period_start;
+    // the device_id column splits them so neither write is dropped. Matches
+    // the unique index created in migration 0016.
     const inserted = await db
       .insert(sensorAggregates)
       .values(rows)
       .onConflictDoNothing({
-        target: [sensorAggregates.teamId, sensorAggregates.periodStart],
+        target: [
+          sensorAggregates.teamId,
+          sensorAggregates.deviceId,
+          sensorAggregates.periodStart,
+        ],
       })
       .returning({ id: sensorAggregates.id });
 
