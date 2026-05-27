@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1051.0",
-    "@neondatabase/serverless": "^1.0.2",
+    "@neondatabase/serverless": "^1.1.0",
     "@reduxjs/toolkit": "^2.11.2",
     "drizzle-orm": "^0.45.2",
     "exceljs": "^4.4.0",

@@ -12,8 +12,8 @@ importers:
         specifier: ^3.1051.0
         version: 3.1051.0
       '@neondatabase/serverless':
-        specifier: ^1.0.2
-        version: 1.0.2
+        specifier: ^1.1.0
+        version: 1.1.0
       '@reduxjs/toolkit':
         specifier: ^2.11.2
         version: 2.11.2(react-redux@9.2.0(@types/react@19.2.14)(react@19.2.4)(redux@5.0.1))(react@19.2.4)
@@ -959,6 +959,10 @@ packages:
 
   '@neondatabase/serverless@1.0.2':
     resolution: {integrity: sha512-I5sbpSIAHiB+b6UttofhrN/UJXII+4tZPAq1qugzwCwLIL8EZLV7F/JyHUrEIiGgQpEXzpnjlJ+zwcEhheGvCw==}
+    engines: {node: '>=19.0.0'}
+
+  '@neondatabase/serverless@1.1.0':
+    resolution: {integrity: sha512-r3ZZhRjEcfEdKIZnoB1RusNgvHuaBRqfCzV4Gi+5A9yUX0S4HTws/ASWqt13wL4y4I+0rqsWGdA2w7EQXHi3+Q==}
     engines: {node: '>=19.0.0'}
 
   '@next/env@16.2.3':
@@ -4096,6 +4100,9 @@ snapshots:
     dependencies:
       '@types/node': 22.19.17
       '@types/pg': 8.20.0
+    optional: true
+
+  '@neondatabase/serverless@1.1.0': {}
 
   '@next/env@16.2.3': {}
 
@@ -4330,6 +4337,7 @@ snapshots:
   '@types/node@22.19.17':
     dependencies:
       undici-types: 6.21.0
+    optional: true
 
   '@types/pdfkit@0.17.6':
     dependencies:

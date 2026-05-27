@@ -1,5 +1,6 @@
 package com.reskill.hacktracker.data.remote
 
+import com.reskill.hacktracker.BuildConfig
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
@@ -14,8 +15,14 @@ object ApiClient {
         val url = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
 
         if (retrofit == null || currentBaseUrl != url) {
+            // Full body logging exposes session tokens + telemetry payloads
+            // in logcat — fine for debug builds, never for release.
             val logging = HttpLoggingInterceptor().apply {
-                level = HttpLoggingInterceptor.Level.BODY
+                level = if (BuildConfig.DEBUG) {
+                    HttpLoggingInterceptor.Level.BODY
+                } else {
+                    HttpLoggingInterceptor.Level.NONE
+                }
             }
 
             val client = OkHttpClient.Builder()

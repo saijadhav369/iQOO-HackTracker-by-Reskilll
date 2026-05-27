@@ -23,24 +23,41 @@ class PasscodeManager(context: Context) {
             val lockUntil = prefs.getLong("lockout_until", 0)
             if (lockUntil == 0L) return false
             if (System.currentTimeMillis() > lockUntil) {
-                clearLockout()
+                // Only the timestamp — KEEP failed_attempts so the next failure
+                // escalates the lockout further (exponential backoff). Counter
+                // only resets via clearLockout() on a successful unlock.
+                prefs.edit().remove("lockout_until").apply()
                 return false
             }
             return true
+        }
+
+    val lockoutRemainingMs: Long
+        get() {
+            val until = prefs.getLong("lockout_until", 0)
+            return (until - System.currentTimeMillis()).coerceAtLeast(0L)
         }
 
     var failedAttempts: Int
         get() = prefs.getInt("failed_attempts", 0)
         private set(value) = prefs.edit().putInt("failed_attempts", value).apply()
 
-    fun recordFailedAttempt() {
+    /**
+     * Records one failed unlock attempt and, past the 3-try threshold, starts
+     * an exponentially-doubling lockout: attempt 3 → 5 min, 4 → 10, 5 → 20,
+     * 6 → 40, 7+ → 60 (cap). Returns the lockout duration in ms (0 if no
+     * lockout was triggered this call).
+     */
+    fun recordFailedAttempt(): Long {
         val attempts = failedAttempts + 1
         failedAttempts = attempts
-        if (attempts >= 3) {
-            prefs.edit()
-                .putLong("lockout_until", System.currentTimeMillis() + 5 * 60 * 1000)
-                .apply()
-        }
+        if (attempts < 3) return 0L
+        val exp = (attempts - 3).coerceAtMost(4)
+        val lockoutMs = ((5L * 60_000L) shl exp).coerceAtMost(60L * 60_000L)
+        prefs.edit()
+            .putLong("lockout_until", System.currentTimeMillis() + lockoutMs)
+            .apply()
+        return lockoutMs
     }
 
     fun clearLockout() {
