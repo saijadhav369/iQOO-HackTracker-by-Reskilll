@@ -116,6 +116,12 @@ export default function DashboardPage() {
               Manage
             </a>
             <a
+              href={`/dashboard/${hackathonId}/teams`}
+              className="px-4 py-2 text-xs font-black uppercase tracking-widest rounded-lg border border-black/10 dark:border-white/10 hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black transition active:scale-95"
+            >
+              Teams
+            </a>
+            <a
               href={`/dashboard/${hackathonId}/registrations`}
               className="px-4 py-2 text-xs font-black uppercase tracking-widest rounded-lg border border-black/10 dark:border-white/10 hover:bg-black hover:text-white dark:hover:bg-white dark:hover:text-black transition active:scale-95"
             >

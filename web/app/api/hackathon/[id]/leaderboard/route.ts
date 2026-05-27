@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import {
   teams,
+  teamMembers,
   hackathons,
   eventBatches,
   deviceVitals,
@@ -12,6 +13,7 @@ import { eq, sql, asc, and } from "drizzle-orm";
 import {
   computeBuildScores,
   type ScoringConfig,
+  type ScoredTeam,
   type TeamRawMetrics,
 } from "@/lib/scoring";
 
@@ -40,14 +42,18 @@ interface VitalsDerived {
   monsterModeMinutes: number;
 }
 
+// Single-pass walk that emits BOTH per-team and per-device VitalsDerived maps.
 // Rows MUST be ordered by (teamId asc, deviceId asc, recordedAt asc).
-// Multi-phone teams: we accumulate per (team, device) so CPU/battery deltas
-// only compare consecutive samples from the same phone, then fold per-device
-// state into the team result. Without per-device partitioning, interleaved
-// samples from different phones generate phantom compile spikes and inflate
-// battery drain. See plan: okay-add-such-a-optimized-puppy.md.
-function deriveVitalsPerTeam(rows: VitalRow[]): Map<string, VitalsDerived> {
-  const out = new Map<string, VitalsDerived>();
+// CPU/battery deltas only compare consecutive samples from the same phone, so
+// interleaved samples from different phones don't generate phantom compile
+// spikes or inflate battery drain. Each device's totals are emitted into
+// `byDevice` and then folded into the parent team in `byTeam`.
+function deriveVitalsBothLevels(rows: VitalRow[]): {
+  byTeam: Map<string, VitalsDerived>;
+  byDevice: Map<string, VitalsDerived>; // key: `${teamId}|${deviceId}`
+} {
+  const byTeam = new Map<string, VitalsDerived>();
+  const byDevice = new Map<string, VitalsDerived>();
 
   let team: string | null = null;
   let device: string | null = null;
@@ -59,6 +65,9 @@ function deriveVitalsPerTeam(rows: VitalRow[]): Map<string, VitalsDerived> {
   let deviceLastTs = 0;
   let deviceSpikes = 0;
   let deviceDrained = 0;
+  let deviceMaxHeadroom = 0;
+  let deviceRedline = 0;
+  let deviceMonsterMinutes = new Set<number>();
 
   // Per-team folded state (reset on each team boundary):
   let teamSpikes = 0;
@@ -68,20 +77,35 @@ function deriveVitalsPerTeam(rows: VitalRow[]): Map<string, VitalsDerived> {
   let teamRedline = 0;
   let teamMonsterMinutes = new Set<number>();
 
-  const foldDevice = () => {
-    if (device === null) return;
+  const flushDevice = () => {
+    if (team === null || device === null) return;
+    const hours =
+      deviceLastTs > deviceFirstTs
+        ? (deviceLastTs - deviceFirstTs) / 3_600_000
+        : 0;
+    byDevice.set(`${team}|${device}`, {
+      compileSpikes: deviceSpikes,
+      batteryDrainRate: hours > 0 ? deviceDrained / hours : 0,
+      thermalHeadroom: deviceMaxHeadroom,
+      hardwareRedline: deviceRedline,
+      monsterModeMinutes: deviceMonsterMinutes.size,
+    });
+    // Fold into team totals.
     teamSpikes += deviceSpikes;
     teamDrained += deviceDrained;
     if (deviceLastTs > deviceFirstTs) {
       teamObservedMs += deviceLastTs - deviceFirstTs;
     }
+    if (deviceMaxHeadroom > teamMaxHeadroom) teamMaxHeadroom = deviceMaxHeadroom;
+    teamRedline += deviceRedline;
+    for (const m of deviceMonsterMinutes) teamMonsterMinutes.add(m);
   };
 
   const flushTeam = () => {
     if (team === null) return;
-    foldDevice();
+    flushDevice();
     const hours = teamObservedMs / 3_600_000;
-    out.set(team, {
+    byTeam.set(team, {
       compileSpikes: teamSpikes,
       batteryDrainRate: hours > 0 ? teamDrained / hours : 0,
       thermalHeadroom: teamMaxHeadroom,
@@ -90,14 +114,17 @@ function deriveVitalsPerTeam(rows: VitalRow[]): Map<string, VitalsDerived> {
     });
   };
 
-  const startDevice = (newDeviceKey: string, firstTs: number) => {
+  const startDevice = (newDevice: string, ts: number) => {
     prevCpu = null;
     prevBattery = null;
-    deviceFirstTs = firstTs;
-    deviceLastTs = firstTs;
+    deviceFirstTs = ts;
+    deviceLastTs = ts;
     deviceSpikes = 0;
     deviceDrained = 0;
-    device = newDeviceKey;
+    deviceMaxHeadroom = 0;
+    deviceRedline = 0;
+    deviceMonsterMinutes = new Set<number>();
+    device = newDevice;
   };
 
   const startTeam = (newTeam: string) => {
@@ -114,7 +141,7 @@ function deriveVitalsPerTeam(rows: VitalRow[]): Map<string, VitalsDerived> {
   for (const r of rows) {
     const ts = r.recordedAt ? new Date(r.recordedAt).getTime() : 0;
     // Null deviceId would collapse all unattributed rows into one bucket per
-    // team — treat each as its own pseudo-device keyed by row index to be safe.
+    // team — treat each as its own pseudo-device keyed by index to be safe.
     const rowDevice = r.deviceId ?? `__nodevice__`;
 
     if (r.teamId !== team) {
@@ -122,38 +149,38 @@ function deriveVitalsPerTeam(rows: VitalRow[]): Map<string, VitalsDerived> {
       startTeam(r.teamId);
       startDevice(rowDevice, ts);
     } else if (rowDevice !== device) {
-      foldDevice();
+      flushDevice();
       startDevice(rowDevice, ts);
     }
 
     if (ts) deviceLastTs = ts;
 
     if (r.cpuUsage != null) {
-      if (prevCpu != null && r.cpuUsage - prevCpu > COMPILE_SPIKE_DELTA) deviceSpikes++;
+      if (prevCpu != null && r.cpuUsage - prevCpu > COMPILE_SPIKE_DELTA) {
+        deviceSpikes++;
+      }
       prevCpu = r.cpuUsage;
     }
 
     if (r.batteryLevel != null) {
-      // Only count drops; charging (level rising) doesn't earn drain credit.
       if (prevBattery != null && prevBattery > r.batteryLevel) {
         deviceDrained += prevBattery - r.batteryLevel;
       }
       prevBattery = r.batteryLevel;
     }
 
-    // Team-wide signals (no per-device walk needed):
-    if (r.thermalHeadroom != null && r.thermalHeadroom > teamMaxHeadroom) {
-      teamMaxHeadroom = r.thermalHeadroom;
+    if (r.thermalHeadroom != null && r.thermalHeadroom > deviceMaxHeadroom) {
+      deviceMaxHeadroom = r.thermalHeadroom;
     }
     if (r.thermalStatus != null && r.thermalStatus >= THERMAL_STATUS_SEVERE) {
-      teamRedline++;
+      deviceRedline++;
     }
     if (r.monsterMode === true && ts) {
-      teamMonsterMinutes.add(Math.floor(ts / 60_000));
+      deviceMonsterMinutes.add(Math.floor(ts / 60_000));
     }
   }
   flushTeam();
-  return out;
+  return { byTeam, byDevice };
 }
 
 const EMPTY_DERIVED: VitalsDerived = {
@@ -163,6 +190,16 @@ const EMPTY_DERIVED: VitalsDerived = {
   hardwareRedline: 0,
   monsterModeMinutes: 0,
 };
+
+export interface MemberScore {
+  slot: number;
+  memberName: string;
+  deviceId: string;
+  buildScore: number;
+  buildScoreRaw: number;
+  rank: number; // rank within the hackathon-wide member pool
+  breakdown: ScoredTeam["breakdown"];
+}
 
 export async function GET(
   _req: NextRequest,
@@ -180,72 +217,103 @@ export async function GET(
       | ScoringConfig
       | null;
 
-    const [teamRows, batchRows, vitalRows, crashRows, idleWarningRows] =
-      await Promise.all([
-        db.select().from(teams).where(eq(teams.hackathonId, id)),
-        db
-          .select({
-            teamId: eventBatches.teamId,
-            officeKitSeconds: sql<number>`coalesce(sum(${eventBatches.officeKitSeconds}), 0)::int`,
-            textInputs: sql<number>`coalesce(sum(${eventBatches.textInputs}), 0)::int`,
-            keyboardSeconds: sql<number>`coalesce(sum(${eventBatches.keyboardActiveSeconds}), 0)::int`,
-          })
-          .from(eventBatches)
-          .where(eq(eventBatches.hackathonId, id))
-          .groupBy(eventBatches.teamId),
-        db
-          .select({
-            teamId: deviceVitals.teamId,
-            // Multi-phone teams: partition the per-phone walks so CPU/battery
-            // deltas only compare consecutive samples from the same device.
-            // Legacy rows have deviceId = null and collapse into a single
-            // "__nodevice__" pseudo-device per team (preserves old behavior).
-            deviceId: deviceVitals.deviceId,
-            recordedAt: deviceVitals.recordedAt,
-            cpuUsage: deviceVitals.cpuUsage,
-            batteryLevel: deviceVitals.batteryLevel,
-            thermalHeadroom: deviceVitals.thermalHeadroom,
-            thermalStatus: deviceVitals.thermalStatus,
-            monsterMode: deviceVitals.monsterMode,
-          })
-          .from(deviceVitals)
-          .where(eq(deviceVitals.hackathonId, id))
-          .orderBy(
-            asc(deviceVitals.teamId),
-            asc(deviceVitals.deviceId),
-            asc(deviceVitals.recordedAt)
-          ),
-        db
-          .select({
-            teamId: crashLogs.teamId,
-            count: sql<number>`count(*)::int`,
-          })
-          .from(crashLogs)
-          .where(eq(crashLogs.hackathonId, id))
-          .groupBy(crashLogs.teamId),
-        db
-          .select({
-            teamId: organiserAlerts.teamId,
-            count: sql<number>`count(*)::int`,
-          })
-          .from(organiserAlerts)
-          .where(
-            and(
-              eq(organiserAlerts.hackathonId, id),
-              eq(organiserAlerts.type, "idle_warning")
-            )
+    const [
+      teamRows,
+      memberRows,
+      batchTeamRows,
+      batchDeviceRows,
+      vitalRows,
+      crashRows,
+      idleWarningRows,
+    ] = await Promise.all([
+      db.select().from(teams).where(eq(teams.hackathonId, id)),
+      db
+        .select({
+          teamId: teamMembers.teamId,
+          deviceId: teamMembers.deviceId,
+          slot: teamMembers.slot,
+          memberName: teamMembers.memberName,
+        })
+        .from(teamMembers)
+        .where(eq(teamMembers.hackathonId, id))
+        .orderBy(asc(teamMembers.teamId), asc(teamMembers.slot)),
+      // Per-team event aggregates (for team rankings — unchanged).
+      db
+        .select({
+          teamId: eventBatches.teamId,
+          officeKitSeconds: sql<number>`coalesce(sum(${eventBatches.officeKitSeconds}), 0)::int`,
+          textInputs: sql<number>`coalesce(sum(${eventBatches.textInputs}), 0)::int`,
+          keyboardSeconds: sql<number>`coalesce(sum(${eventBatches.keyboardActiveSeconds}), 0)::int`,
+        })
+        .from(eventBatches)
+        .where(eq(eventBatches.hackathonId, id))
+        .groupBy(eventBatches.teamId),
+      // Per-device event aggregates (for member rankings).
+      db
+        .select({
+          teamId: eventBatches.teamId,
+          deviceId: eventBatches.deviceId,
+          officeKitSeconds: sql<number>`coalesce(sum(${eventBatches.officeKitSeconds}), 0)::int`,
+          textInputs: sql<number>`coalesce(sum(${eventBatches.textInputs}), 0)::int`,
+          keyboardSeconds: sql<number>`coalesce(sum(${eventBatches.keyboardActiveSeconds}), 0)::int`,
+        })
+        .from(eventBatches)
+        .where(eq(eventBatches.hackathonId, id))
+        .groupBy(eventBatches.teamId, eventBatches.deviceId),
+      db
+        .select({
+          teamId: deviceVitals.teamId,
+          deviceId: deviceVitals.deviceId,
+          recordedAt: deviceVitals.recordedAt,
+          cpuUsage: deviceVitals.cpuUsage,
+          batteryLevel: deviceVitals.batteryLevel,
+          thermalHeadroom: deviceVitals.thermalHeadroom,
+          thermalStatus: deviceVitals.thermalStatus,
+          monsterMode: deviceVitals.monsterMode,
+        })
+        .from(deviceVitals)
+        .where(eq(deviceVitals.hackathonId, id))
+        .orderBy(
+          asc(deviceVitals.teamId),
+          asc(deviceVitals.deviceId),
+          asc(deviceVitals.recordedAt)
+        ),
+      db
+        .select({
+          teamId: crashLogs.teamId,
+          count: sql<number>`count(*)::int`,
+        })
+        .from(crashLogs)
+        .where(eq(crashLogs.hackathonId, id))
+        .groupBy(crashLogs.teamId),
+      db
+        .select({
+          teamId: organiserAlerts.teamId,
+          count: sql<number>`count(*)::int`,
+        })
+        .from(organiserAlerts)
+        .where(
+          and(
+            eq(organiserAlerts.hackathonId, id),
+            eq(organiserAlerts.type, "idle_warning")
           )
-          .groupBy(organiserAlerts.teamId),
-      ]);
+        )
+        .groupBy(organiserAlerts.teamId),
+    ]);
 
-    const batchMap = new Map(batchRows.map((r) => [r.teamId, r]));
-    const vitalsMap = deriveVitalsPerTeam(vitalRows);
+    const batchByTeam = new Map(batchTeamRows.map((r) => [r.teamId, r]));
+    const batchByDevice = new Map(
+      batchDeviceRows.map((r) => [`${r.teamId}|${r.deviceId}`, r])
+    );
+    const { byTeam: vitalsByTeam, byDevice: vitalsByDevice } =
+      deriveVitalsBothLevels(vitalRows);
     const crashMap = new Map(crashRows.map((r) => [r.teamId, r.count]));
     const idleMap = new Map(idleWarningRows.map((r) => [r.teamId, r.count]));
 
+    // ----- Team-level metrics + scores (existing behaviour) -----
     const teamMetrics: TeamRawMetrics[] = teamRows.map((team) => {
-      const batch = batchMap.get(team.id);
-      const v = vitalsMap.get(team.id) ?? EMPTY_DERIVED;
+      const batch = batchByTeam.get(team.id);
+      const v = vitalsByTeam.get(team.id) ?? EMPTY_DERIVED;
       return {
         teamId: team.id,
         teamName: team.name,
@@ -264,8 +332,64 @@ export async function GET(
 
     const { rankings, weights } = computeBuildScores(teamMetrics, scoringConfig);
 
+    // ----- Per-member metrics + scores -----
+    // Each phone in the hackathon competes in one shared pool so the member's
+    // build score is comparable across teams. Penalties (crashes / idle
+    // warnings) are team-level only — no deviceId on those tables — so we
+    // leave them at 0 on the member metrics; the team carries the demerit.
+    const memberMetrics: TeamRawMetrics[] = memberRows.map((m) => {
+      const batch = batchByDevice.get(`${m.teamId}|${m.deviceId}`);
+      const v = vitalsByDevice.get(`${m.teamId}|${m.deviceId}`) ?? EMPTY_DERIVED;
+      return {
+        // Reuse ScoredTeam shape — these "team" fields actually carry per-member
+        // identity through computeBuildScores so we can match them back below.
+        teamId: `${m.teamId}|${m.deviceId}`,
+        teamName: m.memberName,
+        officeKitMinutes: Math.round((batch?.officeKitSeconds ?? 0) / 60),
+        compileSpikes: v.compileSpikes,
+        typingDensity:
+          (batch?.textInputs ?? 0) + (batch?.keyboardSeconds ?? 0),
+        batteryDrainRate: Number(v.batteryDrainRate.toFixed(2)),
+        thermalHeadroom: v.thermalHeadroom,
+        hardwareRedline: v.hardwareRedline,
+        monsterModeMinutes: v.monsterModeMinutes,
+        crashCount: 0,
+        idleWarningCount: 0,
+      };
+    });
+
+    const memberScored = computeBuildScores(memberMetrics, scoringConfig);
+
+    // Re-attach slot + memberName + deviceId by unpacking the synthetic teamId.
+    const memberByKey = new Map(
+      memberRows.map((m) => [`${m.teamId}|${m.deviceId}`, m])
+    );
+    const membersByTeam: Record<string, MemberScore[]> = {};
+    for (const s of memberScored.rankings) {
+      const m = memberByKey.get(s.teamId);
+      if (!m) continue;
+      (membersByTeam[m.teamId] ??= []).push({
+        slot: m.slot,
+        memberName: m.memberName,
+        deviceId: m.deviceId,
+        buildScore: s.buildScore,
+        buildScoreRaw: s.buildScoreRaw,
+        rank: s.rank,
+        breakdown: s.breakdown,
+      });
+    }
+    // Stable order: by slot ascending within each team.
+    for (const teamId of Object.keys(membersByTeam)) {
+      membersByTeam[teamId].sort((a, b) => a.slot - b.slot);
+    }
+
     return NextResponse.json(
-      { rankings, weights, generatedAt: new Date().toISOString() },
+      {
+        rankings,
+        weights,
+        generatedAt: new Date().toISOString(),
+        membersByTeam,
+      },
       {
         headers: {
           "Cache-Control": "public, s-maxage=30, stale-while-revalidate=30",

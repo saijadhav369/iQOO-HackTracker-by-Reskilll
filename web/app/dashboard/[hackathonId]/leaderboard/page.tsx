@@ -6,6 +6,7 @@ import {
   CONTRIBUTORS,
   CONTRIBUTOR_LABELS,
   type Contributor,
+  type ContributorBreakdown,
   type ScoredTeam,
   type Weights,
 } from "@/lib/scoring";
@@ -22,10 +23,21 @@ const TABS: { key: SortKey; label: string }[] = [
   { key: "mostResilient", label: "Most Resilient" },
 ];
 
+interface MemberScore {
+  slot: number;
+  memberName: string;
+  deviceId: string;
+  buildScore: number;
+  buildScoreRaw: number;
+  rank: number;
+  breakdown: Record<Contributor, ContributorBreakdown>;
+}
+
 interface LeaderboardResponse {
   rankings: ScoredTeam[];
   weights: Weights;
   generatedAt: string;
+  membersByTeam: Record<string, MemberScore[]>;
 }
 
 function formatRaw(contributor: Contributor, raw: number): string {
@@ -55,15 +67,21 @@ function formatContribution(n: number): string {
   return `${sign}${n.toFixed(3)}`;
 }
 
+// Reusable breakdown table — works for both team-level and per-member scores
+// (both expose `breakdown` + `buildScoreRaw` of the same shape).
 function BreakdownTable({
-  team,
+  entry,
   weights,
+  compact = false,
 }: {
-  team: ScoredTeam;
+  entry: { breakdown: Record<Contributor, ContributorBreakdown>; buildScoreRaw: number };
   weights: Weights;
+  compact?: boolean;
 }) {
+  const padX = compact ? "px-4" : "px-6";
+  const padY = compact ? "py-3" : "py-5";
   return (
-    <div className="border-t border-black/5 dark:border-white/5 bg-black/[0.02] dark:bg-white/[0.02] px-6 py-5 text-[10px] font-black uppercase tracking-widest">
+    <div className={`border-t border-black/5 dark:border-white/5 bg-black/[0.02] dark:bg-white/[0.02] ${padX} ${padY} text-[10px] font-black uppercase tracking-widest`}>
       <div className="grid grid-cols-12 gap-2 text-gray-400 mb-4 opacity-70">
         <div className="col-span-5">Contributor</div>
         <div className="col-span-2 text-right">Weight</div>
@@ -73,7 +91,7 @@ function BreakdownTable({
       </div>
       <div className="space-y-3">
         {CONTRIBUTORS.map((c) => {
-          const b = team.breakdown[c];
+          const b = entry.breakdown[c];
           const isPenalty = c === "crashCount" || c === "idleWarningCount";
           return (
             <div
@@ -109,8 +127,84 @@ function BreakdownTable({
       <div className="grid grid-cols-12 gap-2 pt-5 mt-5 border-t border-black/5 dark:border-white/5 font-black text-sm">
         <div className="col-span-10 text-right opacity-50">Total Build Score</div>
         <div className="col-span-2 text-right tabular-nums text-primary">
-          {team.buildScoreRaw.toFixed(3)}
+          {entry.buildScoreRaw.toFixed(3)}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// Per-member sub-accordion shown beneath each team's BreakdownTable.
+function MembersSection({
+  members,
+  weights,
+}: {
+  members: MemberScore[];
+  weights: Weights;
+}) {
+  const [openSlot, setOpenSlot] = useState<number | null>(null);
+  if (members.length === 0) {
+    return (
+      <div className="border-t border-black/5 dark:border-white/5 px-6 py-5 text-[10px] font-black uppercase tracking-widest opacity-50">
+        No members registered for this team yet.
+      </div>
+    );
+  }
+  return (
+    <div className="border-t border-black/5 dark:border-white/5 px-6 py-5">
+      <div className="text-[10px] font-black uppercase tracking-widest text-primary mb-3 opacity-80">
+        Members ({members.length})
+      </div>
+      <div className="flex flex-col gap-2">
+        {members.map((m) => {
+          const open = openSlot === m.slot;
+          return (
+            <div
+              key={`${m.slot}|${m.deviceId}`}
+              className={`rounded-xl border transition-all overflow-hidden ${
+                open
+                  ? "border-primary/60 bg-primary/[0.04]"
+                  : "border-black/5 dark:border-white/5 bg-black/[0.02] dark:bg-white/[0.02] hover:border-primary/30"
+              }`}
+            >
+              <button
+                type="button"
+                onClick={() => setOpenSlot(open ? null : m.slot)}
+                className="w-full flex items-center gap-4 px-4 py-3 text-left group"
+              >
+                <span className="text-[10px] font-black uppercase tracking-widest tabular-nums w-12 opacity-50">
+                  M{m.slot}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-black uppercase tracking-tight truncate">
+                    {m.memberName}
+                  </div>
+                  <div className="text-[9px] tabular-nums opacity-40 font-mono truncate">
+                    {m.deviceId}
+                  </div>
+                </div>
+                <div className="text-right shrink-0">
+                  <div className="text-lg font-black tabular-nums tracking-tighter">
+                    {m.buildScore.toFixed(3)}
+                  </div>
+                  <div className="text-[9px] text-gray-400 font-black uppercase tracking-widest opacity-60">
+                    Score #{m.rank}
+                  </div>
+                </div>
+                <div
+                  className={`w-6 h-6 rounded-full flex items-center justify-center bg-black/5 dark:bg-white/5 transition-transform duration-300 ${
+                    open ? "rotate-180 bg-primary text-black" : ""
+                  }`}
+                >
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </div>
+              </button>
+              {open && <BreakdownTable entry={m} weights={weights} compact />}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -121,11 +215,13 @@ function TeamRow({
   index,
   sortKey,
   weights,
+  members,
 }: {
   team: ScoredTeam;
   index: number;
   sortKey: SortKey;
   weights: Weights;
+  members: MemberScore[];
 }) {
   const [open, setOpen] = useState(false);
 
@@ -192,7 +288,12 @@ function TeamRow({
           </svg>
         </div>
       </button>
-      {open && <BreakdownTable team={team} weights={weights} />}
+      {open && (
+        <>
+          <BreakdownTable entry={team} weights={weights} />
+          <MembersSection members={members} weights={weights} />
+        </>
+      )}
     </div>
   );
 }
@@ -315,6 +416,7 @@ export default function LeaderboardPage() {
                 index={idx}
                 sortKey={sortKey}
                 weights={data.weights}
+                members={data.membersByTeam?.[team.teamId] ?? []}
               />
             ))}
           </div>

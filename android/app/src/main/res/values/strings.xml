@@ -31,4 +31,10 @@
     <string name="registration_status_upload_failed">Upload failed. Check network and try again.</string>
     <string name="registration_status_open_failed">Could not open camera: %1$s</string>
     <string name="registration_status_read_failed">Could not read captured file: %1$s</string>
+
+    <!-- Optional contact fields shown above the Capture button. Stored per
+         face-photo row when filled; blanks are saved as null in the DB. -->
+    <string name="registration_participant_hint">Participant Name (optional)</string>
+    <string name="registration_email_hint">Email (optional)</string>
+    <string name="registration_phone_hint">Phone Number (optional)</string>
 </resources>

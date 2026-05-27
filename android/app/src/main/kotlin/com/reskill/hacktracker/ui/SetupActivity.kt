@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.view.View
+import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
 import android.widget.TextView
@@ -20,7 +21,10 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.work.*
+import com.google.android.material.textfield.MaterialAutoCompleteTextView
 import com.reskill.hacktracker.R
+import com.reskill.hacktracker.data.remote.ApiClient
+import com.reskill.hacktracker.data.remote.dto.TeamSummaryDto
 import com.reskill.hacktracker.receivers.HackTrackerAdminReceiver
 import com.reskill.hacktracker.services.DataSyncWorker
 import com.reskill.hacktracker.services.HackTrackerAccessibilityService
@@ -44,13 +48,21 @@ class SetupActivity : AppCompatActivity() {
     private lateinit var deviceIdText: TextView
     private lateinit var apiUrlInput: EditText
     private lateinit var hackathonIdInput: EditText
-    private lateinit var teamIdInput: EditText
-    private lateinit var teamNameInput: EditText
-    private lateinit var memberSlotInput: EditText
+    private lateinit var teamDropdown: MaterialAutoCompleteTextView
     private lateinit var memberNameInput: EditText
     private lateinit var passcodeSetInput: EditText
     private lateinit var saveButton: Button
     private lateinit var stopButton: Button
+
+    // Mirrors what the dropdown currently shows. `selectedTeam` is the row the
+    // user picked (or that we pre-selected based on session.teamId). Slot is
+    // assigned by the server during register — no UI input here.
+    private var availableTeams: List<TeamSummaryDto> = emptyList()
+    private var selectedTeam: TeamSummaryDto? = null
+    // Captures any cfg_team_id extra so we can re-apply it once the team list
+    // arrives. Cleared after first successful match so re-fetches don't keep
+    // overriding manual user picks.
+    private var pendingTeamIdFromExtras: String? = null
 
     private var statusUpdateJob: Job? = null
 
@@ -120,9 +132,7 @@ class SetupActivity : AppCompatActivity() {
         deviceIdText = findViewById(R.id.deviceIdText)
         apiUrlInput = findViewById(R.id.apiUrlInput)
         hackathonIdInput = findViewById(R.id.hackathonIdInput)
-        teamIdInput = findViewById(R.id.teamIdInput)
-        teamNameInput = findViewById(R.id.teamNameInput)
-        memberSlotInput = findViewById(R.id.memberSlotInput)
+        teamDropdown = findViewById(R.id.teamDropdown)
         memberNameInput = findViewById(R.id.memberNameInput)
         passcodeSetInput = findViewById(R.id.passcodeSetInput)
         saveButton = findViewById(R.id.saveButton)
@@ -147,12 +157,11 @@ class SetupActivity : AppCompatActivity() {
             startForegroundService(serviceIntent)
         }
 
-        // Pre-fill from saved config
+        // Pre-fill from saved config. teamDropdown is populated async once
+        // listTeams returns; saved session.teamId is then matched by id to
+        // pre-select the right row.
         apiUrlInput.setText(session.apiUrl)
         hackathonIdInput.setText(session.hackathonId)
-        teamIdInput.setText(session.teamId)
-        teamNameInput.setText(session.teamName)
-        if (session.memberSlot in 1..99) memberSlotInput.setText(session.memberSlot.toString())
         memberNameInput.setText(session.memberName)
         deviceIdText.text = "Device ID: ${session.deviceId}"
 
@@ -184,69 +193,116 @@ class SetupActivity : AppCompatActivity() {
         saveButton.setOnClickListener { saveAndStart() }
         stopButton.setOnClickListener { stopTracking() }
 
+        teamDropdown.setOnItemClickListener { _, _, position, _ ->
+            selectedTeam = availableTeams.getOrNull(position)
+        }
+
         // Headless provisioning: configure + start from intent extras so a phone
-        // can be set up by an ADB script or QR device-owner admin-extras bundle
-        // without any manual typing. Example:
-        //   am start -n com.reskill.hacktracker/.ui.SetupActivity \
-        //     --es cfg_api_url https://host/api --es cfg_hackathon_id iqoo_2026 \
-        //     --es cfg_team_id team_01 --es cfg_team_name "CodeCrafters" \
-        //     --es cfg_passcode 123456
+        // can be set up by an ADB script without manual typing. Provisioning
+        // scripts now pass only cfg_api_url / cfg_hackathon_id / cfg_passcode
+        // (+ optional cfg_member_name); team is always picked from the dropdown
+        // on the phone. cfg_team_id is still honoured for headless flows that
+        // know the team in advance — we match it once the team list arrives.
         maybeConfigureFromExtras()
+
+        // Kick off the async team fetch. Re-fetches whenever the hackathon id
+        // or api url change above.
+        refreshTeamDropdown()
     }
 
     /**
-     * Pre-fill whatever cfg_* extras the launching intent carries. If all four
-     * required fields (api_url, hackathon_id, team_id, team_name) are present,
-     * also auto-kick saveAndStart() — same as the Save button. This split lets
-     * a provisioning script populate just the boilerplate (api_url, hackathon,
-     * passcode) for pre-event configuration; the organiser then types team_id
-     * and team_name on the phone at handover and taps Save manually.
-     *
-     * No-op on a normal launcher tap (no extras) or when already tracking, so
-     * it's safe to re-fire.
+     * Pre-fill whatever cfg_* extras the launching intent carries and queue
+     * cfg_team_id for matching once the team list loads. The auto-saveAndStart
+     * fast path fires only when all required fields are present AND we have a
+     * matched team — otherwise the organiser taps Save manually.
      */
     private fun maybeConfigureFromExtras() {
         if (session.isTracking) return
         val apiUrl = intent?.getStringExtra("cfg_api_url")
         val hackathonId = intent?.getStringExtra("cfg_hackathon_id")
         val teamId = intent?.getStringExtra("cfg_team_id")
-        val teamName = intent?.getStringExtra("cfg_team_name")
-        val memberSlot = intent?.getStringExtra("cfg_member_slot")
         val memberName = intent?.getStringExtra("cfg_member_name")
         val passcode = intent?.getStringExtra("cfg_passcode")
 
-        // Bail if NO extras at all (normal launcher tap).
         if (apiUrl.isNullOrBlank() && hackathonId.isNullOrBlank()
-            && teamId.isNullOrBlank() && teamName.isNullOrBlank()
-            && memberSlot.isNullOrBlank() && memberName.isNullOrBlank()
+            && teamId.isNullOrBlank() && memberName.isNullOrBlank()
             && passcode.isNullOrBlank()) return
 
-        // Pre-fill any field that was provided. Empty/missing extras leave the
-        // existing input value alone (which may already be populated from
-        // SharedPreferences in onCreate).
         if (!apiUrl.isNullOrBlank()) apiUrlInput.setText(apiUrl)
         if (!hackathonId.isNullOrBlank()) hackathonIdInput.setText(hackathonId)
-        if (!teamId.isNullOrBlank()) teamIdInput.setText(teamId)
-        if (!teamName.isNullOrBlank()) teamNameInput.setText(teamName)
-        if (!memberSlot.isNullOrBlank()) memberSlotInput.setText(memberSlot)
         if (!memberName.isNullOrBlank()) memberNameInput.setText(memberName)
         if (!passcode.isNullOrBlank()) passcodeSetInput.setText(passcode)
-
-        // Auto-start tracking only when the full set of required fields is
-        // present. With --defer-team provisioning the organiser will tap Save
-        // manually after typing team_id + team_name + member info on the phone.
-        if (!apiUrl.isNullOrBlank() && !hackathonId.isNullOrBlank()
-            && !teamId.isNullOrBlank() && !teamName.isNullOrBlank()
-            && !memberSlot.isNullOrBlank() && !memberName.isNullOrBlank()) {
-            saveAndStart()
+        if (!teamId.isNullOrBlank()) {
+            // Cache for late-binding in refreshTeamDropdown's success callback.
+            pendingTeamIdFromExtras = teamId
+            // Persist so a save-without-load fallback at least has the right id.
+            session.teamId = teamId
         }
+    }
+
+    /**
+     * Fetch the registered teams for the current hackathon and populate the
+     * dropdown adapter. Safe to call any number of times — replaces the
+     * adapter on each successful response. Silent on failure: the dropdown
+     * stays empty (or with previous values) and the helper text keeps the
+     * organiser pointed at the Manage page.
+     */
+    private fun refreshTeamDropdown() {
+        val apiUrl = apiUrlInput.text.toString().trim()
+        val hackathonId = hackathonIdInput.text.toString().trim()
+        if (apiUrl.isBlank() || hackathonId.isBlank()) return
+        CoroutineScope(Dispatchers.IO).launch {
+            val teams = try {
+                val resp = ApiClient.getService(apiUrl).listTeams(hackathonId)
+                if (resp.isSuccessful) resp.body() ?: emptyList() else emptyList()
+            } catch (_: Exception) {
+                emptyList()
+            }
+            withContext(Dispatchers.Main) {
+                availableTeams = teams
+                val labels = teams.map { "${it.name} (${it.id})" }
+                val adapter = ArrayAdapter(
+                    this@SetupActivity,
+                    android.R.layout.simple_list_item_1,
+                    labels
+                )
+                teamDropdown.setAdapter(adapter)
+
+                // Pre-select: cfg_team_id extra wins, then saved session.teamId.
+                val preferredId = pendingTeamIdFromExtras ?: session.teamId
+                val match = if (preferredId.isNotBlank()) {
+                    teams.firstOrNull { it.id == preferredId }
+                } else null
+                if (match != null) {
+                    selectedTeam = match
+                    teamDropdown.setText("${match.name} (${match.id})", false)
+                    pendingTeamIdFromExtras = null
+                    // Auto-start when the headless flow provided everything.
+                    maybeAutoStartFromExtras()
+                }
+            }
+        }
+    }
+
+    /**
+     * Headless / batch provisioning: if every required field came in via
+     * cfg_* extras AND the dropdown matched a team, fire saveAndStart()
+     * automatically. Otherwise the organiser taps Save manually.
+     */
+    private fun maybeAutoStartFromExtras() {
+        if (session.isTracking) return
+        val apiUrl = apiUrlInput.text.toString().trim()
+        val hackathonId = hackathonIdInput.text.toString().trim()
+        val memberName = memberNameInput.text.toString().trim()
+        val passcode = passcodeSetInput.text.toString().trim()
+        val hasPasscode = passcode.isNotBlank() || passcodeManager.isPasscodeSet
+        if (selectedTeam == null) return
+        if (apiUrl.isBlank() || hackathonId.isBlank() || memberName.isBlank() || !hasPasscode) return
+        saveAndStart()
     }
 
     override fun onResume() {
         super.onResume()
-        // If the AccessibilityService isn't grabbing screenshots (non-DO install
-        // or any failure mode), MediaProjection.onStop clears the consent —
-        // re-prompt here so the next organiser request just works.
         if (!isDeviceOwner() && !MediaProjectionHolder.hasToken()) {
             try { requestMediaProjectionConsent() } catch (_: Exception) {}
         }
@@ -303,16 +359,12 @@ class SetupActivity : AppCompatActivity() {
 
         statusText.text = "Status: ${statusParts.joinToString(" | ")}"
 
-        // Show/hide buttons based on state
         if (tracking) {
             saveButton.visibility = View.GONE
             stopButton.visibility = View.VISIBLE
-            // Disable config fields
             apiUrlInput.isEnabled = false
             hackathonIdInput.isEnabled = false
-            teamIdInput.isEnabled = false
-            teamNameInput.isEnabled = false
-            memberSlotInput.isEnabled = false
+            teamDropdown.isEnabled = false
             memberNameInput.isEnabled = false
             passcodeSetInput.isEnabled = false
         } else {
@@ -320,9 +372,7 @@ class SetupActivity : AppCompatActivity() {
             stopButton.visibility = View.GONE
             apiUrlInput.isEnabled = true
             hackathonIdInput.isEnabled = true
-            teamIdInput.isEnabled = true
-            teamNameInput.isEnabled = true
-            memberSlotInput.isEnabled = true
+            teamDropdown.isEnabled = true
             memberNameInput.isEnabled = true
             passcodeSetInput.isEnabled = true
         }
@@ -331,21 +381,25 @@ class SetupActivity : AppCompatActivity() {
     private fun saveAndStart() {
         val apiUrl = apiUrlInput.text.toString().trim()
         val hackathonId = hackathonIdInput.text.toString().trim()
-        val teamId = teamIdInput.text.toString().trim()
-        val teamName = teamNameInput.text.toString().trim()
-        val memberSlotRaw = memberSlotInput.text.toString().trim()
         val memberName = memberNameInput.text.toString().trim()
         val passcode = passcodeSetInput.text.toString().trim()
 
-        if (apiUrl.isBlank() || hackathonId.isBlank() || teamId.isBlank() || teamName.isBlank()
-            || memberSlotRaw.isBlank() || memberName.isBlank()) {
+        if (apiUrl.isBlank() || hackathonId.isBlank() || memberName.isBlank()) {
             Toast.makeText(this, "Fill all fields", Toast.LENGTH_SHORT).show()
             return
         }
 
-        val memberSlot = memberSlotRaw.toIntOrNull()
-        if (memberSlot == null || memberSlot !in 1..99) {
-            Toast.makeText(this, "Member slot must be 1, 2, 3 ...", Toast.LENGTH_SHORT).show()
+        val team = selectedTeam
+        if (team == null) {
+            if (availableTeams.isEmpty()) {
+                Toast.makeText(
+                    this,
+                    "No teams registered for this hackathon. Open the dashboard's Manage page and add a team first, then come back.",
+                    Toast.LENGTH_LONG
+                ).show()
+            } else {
+                Toast.makeText(this, "Pick your team from the dropdown.", Toast.LENGTH_SHORT).show()
+            }
             return
         }
 
@@ -354,24 +408,23 @@ class SetupActivity : AppCompatActivity() {
             return
         }
 
-        // Save configuration
+        // Save configuration. memberSlot is left at whatever it was (0 = not
+        // yet assigned); TrackingRepository.registerDevice sends null and reads
+        // the server-assigned slot back into session.memberSlot on success.
         session.apiUrl = apiUrl
         session.hackathonId = hackathonId
-        session.teamId = teamId
-        session.teamName = teamName
-        session.memberSlot = memberSlot
+        session.teamId = team.id
+        session.teamName = team.name
         session.memberName = memberName
 
         if (passcode.isNotBlank()) {
             passcodeManager.setPasscode(passcode)
         }
 
-        // Activate device admin if not active
         if (!isDeviceAdminActive()) {
             requestDeviceAdmin()
         }
 
-        // Register device with backend + start tracking
         saveButton.isEnabled = false
         saveButton.text = "Starting..."
         CoroutineScope(Dispatchers.IO).launch {
@@ -383,14 +436,13 @@ class SetupActivity : AppCompatActivity() {
 
                 when (result) {
                     is com.reskill.hacktracker.data.repository.TrackingRepository.RegisterResult.SlotConflict -> {
-                        // Don't flip isTracking — the participant needs to pick a
-                        // different slot first or this phone will never appear on
-                        // the dashboard.
                         Toast.makeText(
                             this@SetupActivity,
-                            "Member slot ${result.slot} is already taken on this team. Pick a different slot and tap Save again.",
+                            "Member slot ${result.slot} is already taken on this team. Tap Save again to let the server pick a fresh slot.",
                             Toast.LENGTH_LONG
                         ).show()
+                        // Reset stored slot so the next attempt requests auto-assign.
+                        session.memberSlot = 0
                         return@withContext
                     }
                     is com.reskill.hacktracker.data.repository.TrackingRepository.RegisterResult.Failure -> {
@@ -405,11 +457,9 @@ class SetupActivity : AppCompatActivity() {
 
                 session.isTracking = true
 
-                // Start foreground service
                 val serviceIntent = Intent(this@SetupActivity, TrackingForegroundService::class.java)
                 startForegroundService(serviceIntent)
 
-                // Schedule periodic sync backup
                 val syncRequest = PeriodicWorkRequestBuilder<DataSyncWorker>(
                     15, TimeUnit.MINUTES
                 )
@@ -433,10 +483,6 @@ class SetupActivity : AppCompatActivity() {
     }
 
     private fun stopTracking() {
-        // Mark this as a clean exit so the next process start (or the server
-        // status calc) doesn't classify it as a crash. Passcode-authorised
-        // stop is the ONLY runtime path that flips clean_exit=true; everything
-        // else relies on ShutdownReceiver catching a system broadcast.
         session.cleanExit = true
         session.isTracking = false
         stopService(Intent(this, TrackingForegroundService::class.java))

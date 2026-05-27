@@ -31,6 +31,17 @@ export async function POST(req: NextRequest) {
         ? imeiRaw.trim()
         : null;
 
+    // Optional participant contact fields. Empty strings become null so the
+    // dashboard's nullish-fallback rendering shows em-dashes consistently.
+    const trimOrNull = (raw: FormDataEntryValue | null): string | null => {
+      if (typeof raw !== "string") return null;
+      const t = raw.trim();
+      return t.length > 0 ? t : null;
+    };
+    const participantName = trimOrNull(form.get("participant_name"));
+    const email = trimOrNull(form.get("email"));
+    const phone = trimOrNull(form.get("phone"));
+
     if (!teamId || !deviceId || !hackathonId) {
       return NextResponse.json(
         { error: "Missing team_id / device_id / hackathon_id" },
@@ -79,6 +90,9 @@ export async function POST(req: NextRequest) {
         hackathonId,
         deviceId,
         imei,
+        participantName,
+        email,
+        phone,
       })
       .returning({ id: facePhotos.id });
 

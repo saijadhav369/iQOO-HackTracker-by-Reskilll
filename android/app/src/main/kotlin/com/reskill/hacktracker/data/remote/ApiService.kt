@@ -5,9 +5,11 @@ import okhttp3.MultipartBody
 import okhttp3.RequestBody
 import retrofit2.Response
 import retrofit2.http.Body
+import retrofit2.http.GET
 import retrofit2.http.Multipart
 import retrofit2.http.POST
 import retrofit2.http.Part
+import retrofit2.http.Path
 
 interface ApiService {
     @POST("events/batch")
@@ -21,6 +23,14 @@ interface ApiService {
 
     @POST("device/register")
     suspend fun registerDevice(@Body registration: DeviceRegistrationDto): Response<Map<String, Any>>
+
+    // Populates the team dropdown on SetupActivity. Backend returns a richer
+    // object than TeamSummaryDto consumes (members, heartbeat, battery); Gson
+    // ignores extra fields so this stays forward-compatible.
+    @GET("hackathon/{hackathon_id}/teams")
+    suspend fun listTeams(
+        @Path("hackathon_id") hackathonId: String
+    ): Response<List<TeamSummaryDto>>
 
     @POST("camera/event")
     suspend fun sendCameraEvent(@Body event: CameraEventDto): Response<Map<String, Any>>
@@ -52,6 +62,10 @@ interface ApiService {
         @Part("team_id") teamId: RequestBody,
         @Part("device_id") deviceId: RequestBody,
         @Part("hackathon_id") hackathonId: RequestBody,
-        @Part("imei") imei: RequestBody
+        @Part("imei") imei: RequestBody,
+        // Optional participant contact fields. Empty strings -> backend stores null.
+        @Part("participant_name") participantName: RequestBody,
+        @Part("email") email: RequestBody,
+        @Part("phone") phone: RequestBody
     ): Response<Map<String, Any>>
 }

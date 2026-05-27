@@ -50,6 +50,12 @@ class RegistrationCaptureActivity : AppCompatActivity() {
     private lateinit var passcodeManager: PasscodeManager
     private lateinit var statusText: TextView
     private lateinit var captureButton: Button
+    // Optional contact fields. Empty values upload as empty strings which the
+    // backend trims to null — no validation here so the participant can leave
+    // any combination blank.
+    private lateinit var nameInput: EditText
+    private lateinit var emailInput: EditText
+    private lateinit var phoneInput: EditText
 
     private var pendingPhotoFile: File? = null
     // True from the moment the user taps Capture until the upload finishes (or
@@ -82,6 +88,9 @@ class RegistrationCaptureActivity : AppCompatActivity() {
         passcodeManager = PasscodeManager(this)
         statusText = findViewById(R.id.registrationStatus)
         captureButton = findViewById(R.id.registrationCaptureButton)
+        nameInput = findViewById(R.id.registrationNameInput)
+        emailInput = findViewById(R.id.registrationEmailInput)
+        phoneInput = findViewById(R.id.registrationPhoneInput)
         captureButton.setOnClickListener { onCaptureClicked() }
         refreshStatus()
     }
@@ -217,6 +226,11 @@ class RegistrationCaptureActivity : AppCompatActivity() {
     private fun uploadCapturedPhoto(file: File) {
         setStatus(getString(R.string.registration_status_uploading))
         val imei = readImeiBestEffort()
+        // Snapshot the contact fields here on the main thread so the upload
+        // coroutine never touches the UI views.
+        val participantName = nameInput.text?.toString()?.trim().orEmpty()
+        val email = emailInput.text?.toString()?.trim().orEmpty()
+        val phone = phoneInput.text?.toString()?.trim().orEmpty()
         CoroutineScope(Dispatchers.IO).launch {
             val bytes: ByteArray = try {
                 val options = BitmapFactory.Options().apply {
@@ -269,7 +283,10 @@ class RegistrationCaptureActivity : AppCompatActivity() {
                     teamId = session.teamId.toRequestBody(plain),
                     deviceId = session.deviceId.toRequestBody(plain),
                     hackathonId = session.hackathonId.toRequestBody(plain),
-                    imei = (imei ?: "").toRequestBody(plain)
+                    imei = (imei ?: "").toRequestBody(plain),
+                    participantName = participantName.toRequestBody(plain),
+                    email = email.toRequestBody(plain),
+                    phone = phone.toRequestBody(plain)
                 )
                 Log.w(
                     "HackTracker",
@@ -284,6 +301,11 @@ class RegistrationCaptureActivity : AppCompatActivity() {
             withContext(Dispatchers.Main) {
                 inFlight = false
                 if (result == "OK") {
+                    // Wipe the contact inputs so the next capture for a
+                    // different participant starts clean.
+                    nameInput.setText("")
+                    emailInput.setText("")
+                    phoneInput.setText("")
                     setStatus(
                         if (imei == null) {
                             getString(R.string.registration_status_uploaded_no_imei)

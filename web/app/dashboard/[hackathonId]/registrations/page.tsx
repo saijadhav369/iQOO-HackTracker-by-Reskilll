@@ -11,6 +11,9 @@ type FacePhoto = {
   deviceId: string | null;
   imei: string | null;
   imageUrl: string;
+  participantName: string | null;
+  email: string | null;
+  phone: string | null;
   capturedAt: string;
 };
 
@@ -113,6 +116,9 @@ export default function RegistrationsPage() {
                     Photo
                   </th>
                   <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest">
+                    Participant
+                  </th>
+                  <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest">
                     IMEI / Device ID
                   </th>
                   <th className="px-4 py-3 text-[10px] font-black uppercase tracking-widest">
@@ -143,6 +149,29 @@ export default function RegistrationsPage() {
                           loading="lazy"
                         />
                       </a>
+                    </td>
+                    <td className="px-4 py-3 text-xs">
+                      {row.participantName || row.email || row.phone ? (
+                        <div className="flex flex-col gap-0.5">
+                          {row.participantName && (
+                            <span className="font-black uppercase tracking-tight">
+                              {row.participantName}
+                            </span>
+                          )}
+                          {row.email && (
+                            <span className="opacity-60 font-mono text-[10px] break-all">
+                              {row.email}
+                            </span>
+                          )}
+                          {row.phone && (
+                            <span className="opacity-60 font-mono text-[10px]">
+                              {row.phone}
+                            </span>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="opacity-40">—</span>
+                      )}
                     </td>
                     <td className="px-4 py-3 font-mono text-xs">
                       {row.imei ? (

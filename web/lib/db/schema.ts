@@ -390,6 +390,11 @@ export const facePhotos = pgTable(
     // Populated after the S3 PUT succeeds. Null = upload in-flight or rolled
     // back; the list endpoint filters those out.
     imageUrl: text("image_url"),
+    // Optional contact details typed on the phone above the Capture button.
+    // All nullable — the organiser may leave any combination blank at handover.
+    participantName: text("participant_name"),
+    email: text("email"),
+    phone: text("phone"),
     capturedAt: timestamp("captured_at", { withTimezone: true })
       .defaultNow()
       .notNull(),

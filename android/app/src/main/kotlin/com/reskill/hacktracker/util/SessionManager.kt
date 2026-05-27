@@ -23,9 +23,15 @@ class SessionManager(context: Context) {
         get() = prefs.getString("team_name", "") ?: ""
         set(value) = prefs.edit().putString("team_name", value).apply()
 
-    /** Display ordinal (1, 2, 3 ...) for the participant on this phone within the team. */
+    /**
+     * Display ordinal (1, 2, 3 ...) for the participant on this phone within
+     * the team. Default 0 = "not yet assigned" — the server picks the lowest
+     * free slot on register and the response slot is written back here. Once
+     * set the value is persistent across the app's lifetime so subsequent
+     * register calls keep the same slot.
+     */
     var memberSlot: Int
-        get() = prefs.getInt("member_slot", 1)
+        get() = prefs.getInt("member_slot", 0)
         set(value) = prefs.edit().putInt("member_slot", value).apply()
 
     /** Free-form participant name. Shown on the dashboard as "Member {slot}: {name}". */
@@ -103,5 +109,5 @@ class SessionManager(context: Context) {
 
     val isConfigured: Boolean
         get() = hackathonId.isNotBlank() && teamId.isNotBlank() && apiUrl.isNotBlank()
-            && memberName.isNotBlank() && memberSlot in 1..99
+            && memberName.isNotBlank()
 }

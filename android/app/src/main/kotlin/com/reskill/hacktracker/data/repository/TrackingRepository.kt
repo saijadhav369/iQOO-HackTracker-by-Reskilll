@@ -30,21 +30,36 @@ class TrackingRepository(private val context: Context) {
     suspend fun registerDevice(): RegisterResult {
         if (!session.isConfigured) return RegisterResult.Failure
         return try {
+            // When session.memberSlot is 0 we let the server auto-assign the
+            // lowest free slot. Once we have a slot from a previous register
+            // (saved to prefs) we send it back so re-registers keep the same
+            // ordinal.
+            val requestedSlot: Int? =
+                if (session.memberSlot in 1..999) session.memberSlot else null
             val response = api().registerDevice(
                 DeviceRegistrationDto(
                     deviceId = session.deviceId,
                     hackathonId = session.hackathonId,
                     teamId = session.teamId,
                     teamName = session.teamName,
-                    memberSlot = session.memberSlot,
+                    memberSlot = requestedSlot,
                     memberName = session.memberName,
                 )
             )
             when {
-                response.isSuccessful -> RegisterResult.Success
-                // Server returns 409 when another phone already claimed the slot.
-                // Setup surfaces this so the participant can pick a different slot.
-                response.code() == 409 -> RegisterResult.SlotConflict(session.memberSlot)
+                response.isSuccessful -> {
+                    // Capture the server-assigned slot for future heartbeats / UI.
+                    val body = response.body()
+                    val assigned = (body?.get("slot") as? Number)?.toInt()
+                    if (assigned != null && assigned > 0) {
+                        session.memberSlot = assigned
+                    }
+                    RegisterResult.Success
+                }
+                // Server returns 409 when another phone already claimed the slot
+                // the client explicitly asked for. Auto-assign mode (slot=null)
+                // never collides, so this only fires for manual slot requests.
+                response.code() == 409 -> RegisterResult.SlotConflict(requestedSlot ?: 0)
                 else -> RegisterResult.Failure
             }
         } catch (_: Exception) {

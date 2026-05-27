@@ -33,6 +33,9 @@ export async function GET(
       deviceId: facePhotos.deviceId,
       imei: facePhotos.imei,
       imageUrl: facePhotos.imageUrl,
+      participantName: facePhotos.participantName,
+      email: facePhotos.email,
+      phone: facePhotos.phone,
       capturedAt: facePhotos.capturedAt,
     })
     .from(facePhotos)
@@ -53,6 +56,9 @@ export async function GET(
       deviceId: r.deviceId,
       imei: r.imei,
       imageUrl: r.imageUrl,
+      participantName: r.participantName,
+      email: r.email,
+      phone: r.phone,
       capturedAt:
         r.capturedAt instanceof Date
           ? r.capturedAt.toISOString()

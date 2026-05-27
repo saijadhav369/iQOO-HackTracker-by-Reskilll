@@ -32,7 +32,9 @@ export default function ManagePage() {
   const [teams, setTeams] = useState<Team[]>([]);
   const [newTeamId, setNewTeamId] = useState("");
   const [newTeamName, setNewTeamName] = useState("");
-  const [newDeviceId, setNewDeviceId] = useState("");
+  // Device ID input removed — per-phone identity is now claimed when the phone
+  // registers from the Android app (team_members table keyed by device_id).
+  // Manage page only creates the team row; phones add themselves via dropdown.
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -75,7 +77,7 @@ export default function ManagePage() {
           id: newTeamId,
           hackathon_id: hackathonId,
           name: newTeamName,
-          device_id: newDeviceId || undefined,
+          // device_id intentionally omitted — phones claim slots themselves.
         }),
       });
 
@@ -83,7 +85,7 @@ export default function ManagePage() {
         setMessage("Team added!");
         setNewTeamId("");
         setNewTeamName("");
-        setNewDeviceId("");
+        // (no device_id state to reset)
         fetchTeams();
       } else {
         const data = await res.json();
@@ -193,14 +195,10 @@ export default function ManagePage() {
                   required
                   className="w-full rounded-xl border border-black/5 dark:border-white/5 bg-black/5 dark:bg-white/5 px-4 py-3 text-sm font-black focus:outline-none focus:ring-2 focus:ring-primary transition-all"
                 />
-                <input
-                  type="text"
-                  value={newDeviceId}
-                  onChange={(e) => setNewDeviceId(e.target.value)}
-                  placeholder="Device ID (optional)"
-                  className="w-full rounded-xl border border-black/5 dark:border-white/5 bg-black/5 dark:bg-white/5 px-4 py-3 text-sm font-black focus:outline-none focus:ring-2 focus:ring-primary transition-all opacity-50 focus:opacity-100"
-                />
               </div>
+              <p className="text-[10px] font-black uppercase tracking-widest opacity-50">
+                Phones claim their member slot via the team dropdown in the Android Setup screen.
+              </p>
               <button
                 type="submit"
                 disabled={loading}

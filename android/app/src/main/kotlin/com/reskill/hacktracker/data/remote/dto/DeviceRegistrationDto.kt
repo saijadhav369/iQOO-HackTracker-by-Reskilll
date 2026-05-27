@@ -7,6 +7,8 @@ data class DeviceRegistrationDto(
     @SerializedName("hackathon_id") val hackathonId: String,
     @SerializedName("team_id") val teamId: String,
     @SerializedName("team_name") val teamName: String,
-    @SerializedName("member_slot") val memberSlot: Int,
+    // Nullable: when omitted the server auto-assigns the lowest free slot for
+    // the team. Set explicitly only when a participant manually picks a slot.
+    @SerializedName("member_slot") val memberSlot: Int?,
     @SerializedName("member_name") val memberName: String
 )
