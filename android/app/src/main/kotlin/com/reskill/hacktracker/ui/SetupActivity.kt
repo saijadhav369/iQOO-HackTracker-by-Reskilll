@@ -49,6 +49,7 @@ class SetupActivity : AppCompatActivity() {
     private lateinit var apiUrlInput: EditText
     private lateinit var hackathonIdInput: EditText
     private lateinit var teamDropdown: MaterialAutoCompleteTextView
+    private lateinit var loadTeamsButton: Button
     private lateinit var memberNameInput: EditText
     private lateinit var passcodeSetInput: EditText
     private lateinit var saveButton: Button
@@ -133,6 +134,7 @@ class SetupActivity : AppCompatActivity() {
         apiUrlInput = findViewById(R.id.apiUrlInput)
         hackathonIdInput = findViewById(R.id.hackathonIdInput)
         teamDropdown = findViewById(R.id.teamDropdown)
+        loadTeamsButton = findViewById(R.id.loadTeamsButton)
         memberNameInput = findViewById(R.id.memberNameInput)
         passcodeSetInput = findViewById(R.id.passcodeSetInput)
         saveButton = findViewById(R.id.saveButton)
@@ -197,6 +199,22 @@ class SetupActivity : AppCompatActivity() {
             selectedTeam = availableTeams.getOrNull(position)
         }
 
+        loadTeamsButton.setOnClickListener {
+            // Manual refresh path — toast the result so the organiser knows the
+            // fetch actually happened (vs. a silent retry).
+            refreshTeamDropdown(showToast = true)
+        }
+
+        // Hitting "Done" on the hackathon-id keyboard also refreshes the
+        // dropdown — saves a tap when the organiser corrects the id and
+        // wants to see the team list immediately.
+        hackathonIdInput.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_DONE) {
+                refreshTeamDropdown(showToast = true)
+                true
+            } else false
+        }
+
         // Headless provisioning: configure + start from intent extras so a phone
         // can be set up by an ADB script without manual typing. Provisioning
         // scripts now pass only cfg_api_url / cfg_hackathon_id / cfg_passcode
@@ -243,19 +261,38 @@ class SetupActivity : AppCompatActivity() {
     /**
      * Fetch the registered teams for the current hackathon and populate the
      * dropdown adapter. Safe to call any number of times — replaces the
-     * adapter on each successful response. Silent on failure: the dropdown
-     * stays empty (or with previous values) and the helper text keeps the
-     * organiser pointed at the Manage page.
+     * adapter on each successful response. `showToast=true` reports the
+     * count (success or failure) — used for manual taps on Load Teams /
+     * the keyboard's Done action so the organiser gets explicit feedback.
      */
-    private fun refreshTeamDropdown() {
+    private fun refreshTeamDropdown(showToast: Boolean = false) {
         val apiUrl = apiUrlInput.text.toString().trim()
         val hackathonId = hackathonIdInput.text.toString().trim()
-        if (apiUrl.isBlank() || hackathonId.isBlank()) return
+        if (apiUrl.isBlank() || hackathonId.isBlank()) {
+            if (showToast) {
+                Toast.makeText(
+                    this,
+                    "Fill the API URL and Hackathon ID first.",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+            return
+        }
+        if (showToast) {
+            Toast.makeText(this, "Loading teams…", Toast.LENGTH_SHORT).show()
+        }
         CoroutineScope(Dispatchers.IO).launch {
+            var errorMessage: String? = null
             val teams = try {
                 val resp = ApiClient.getService(apiUrl).listTeams(hackathonId)
-                if (resp.isSuccessful) resp.body() ?: emptyList() else emptyList()
-            } catch (_: Exception) {
+                if (resp.isSuccessful) {
+                    resp.body() ?: emptyList()
+                } else {
+                    errorMessage = "HTTP ${resp.code()}"
+                    emptyList()
+                }
+            } catch (e: Exception) {
+                errorMessage = e.message ?: "network error"
                 emptyList()
             }
             withContext(Dispatchers.Main) {
@@ -267,6 +304,16 @@ class SetupActivity : AppCompatActivity() {
                     labels
                 )
                 teamDropdown.setAdapter(adapter)
+
+                if (showToast) {
+                    val msg = when {
+                        errorMessage != null -> "Could not load teams: $errorMessage"
+                        teams.isEmpty() -> "No teams found for '$hackathonId'. Register them on the dashboard's Manage page first."
+                        teams.size == 1 -> "Loaded 1 team."
+                        else -> "Loaded ${teams.size} teams."
+                    }
+                    Toast.makeText(this@SetupActivity, msg, Toast.LENGTH_LONG).show()
+                }
 
                 // Pre-select: cfg_team_id extra wins, then saved session.teamId.
                 val preferredId = pendingTeamIdFromExtras ?: session.teamId
@@ -365,6 +412,7 @@ class SetupActivity : AppCompatActivity() {
             apiUrlInput.isEnabled = false
             hackathonIdInput.isEnabled = false
             teamDropdown.isEnabled = false
+            loadTeamsButton.isEnabled = false
             memberNameInput.isEnabled = false
             passcodeSetInput.isEnabled = false
         } else {
@@ -373,6 +421,7 @@ class SetupActivity : AppCompatActivity() {
             apiUrlInput.isEnabled = true
             hackathonIdInput.isEnabled = true
             teamDropdown.isEnabled = true
+            loadTeamsButton.isEnabled = true
             memberNameInput.isEnabled = true
             passcodeSetInput.isEnabled = true
         }
