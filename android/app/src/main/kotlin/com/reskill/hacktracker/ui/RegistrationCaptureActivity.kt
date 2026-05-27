@@ -1,6 +1,8 @@
 package com.reskill.hacktracker.ui
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -26,6 +28,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.MultipartBody
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.ByteArrayOutputStream
 import java.io.File
 
 /**
@@ -216,9 +219,29 @@ class RegistrationCaptureActivity : AppCompatActivity() {
         val imei = readImeiBestEffort()
         CoroutineScope(Dispatchers.IO).launch {
             val bytes: ByteArray = try {
-                file.readBytes()
+                val options = BitmapFactory.Options().apply {
+                    inJustDecodeBounds = true
+                }
+                BitmapFactory.decodeFile(file.absolutePath, options)
+                
+                // Target ~1024px on the longest side for registration photos
+                val longest = Math.max(options.outWidth, options.outHeight)
+                var sampleSize = 1
+                if (longest > 1024) {
+                    sampleSize = Math.round(longest.toFloat() / 1024f)
+                }
+                
+                val finalOptions = BitmapFactory.Options().apply {
+                    inSampleSize = sampleSize
+                }
+                val bitmap = BitmapFactory.decodeFile(file.absolutePath, finalOptions)
+                val out = ByteArrayOutputStream()
+                bitmap.compress(Bitmap.CompressFormat.JPEG, 80, out)
+                val result = out.toByteArray()
+                bitmap.recycle()
+                result
             } catch (e: Exception) {
-                Log.w("HackTracker", "registration: read captured file failed", e)
+                Log.w("HackTracker", "registration: process captured file failed", e)
                 runCatching { file.delete() }
                 withContext(Dispatchers.Main) {
                     inFlight = false
@@ -234,7 +257,7 @@ class RegistrationCaptureActivity : AppCompatActivity() {
             }
             runCatching { file.delete() }
 
-            val ok = try {
+            val result = try {
                 val imagePart = MultipartBody.Part.createFormData(
                     "image",
                     "face-${System.currentTimeMillis()}.jpg",
@@ -252,15 +275,15 @@ class RegistrationCaptureActivity : AppCompatActivity() {
                     "HackTracker",
                     "registration: upload HTTP ${response.code()} (${bytes.size}b, imei=${imei ?: "null"})"
                 )
-                response.isSuccessful
+                if (response.isSuccessful) "OK" else "HTTP ${response.code()}"
             } catch (e: Exception) {
                 Log.w("HackTracker", "registration: upload failed", e)
-                false
+                e.message ?: "Unknown error"
             }
 
             withContext(Dispatchers.Main) {
                 inFlight = false
-                if (ok) {
+                if (result == "OK") {
                     setStatus(
                         if (imei == null) {
                             getString(R.string.registration_status_uploaded_no_imei)
@@ -269,7 +292,7 @@ class RegistrationCaptureActivity : AppCompatActivity() {
                         }
                     )
                 } else {
-                    setStatus(getString(R.string.registration_status_upload_failed))
+                    setStatus("Upload failed: $result")
                 }
                 captureButton.isEnabled = true
             }

@@ -107,7 +107,9 @@
                     app:boxBackgroundColor="#1AFFFFFF"
                     app:hintTextColor="@color/primary"
                     app:placeholderTextColor="#66FFFFFF"
-                    android:textColorHint="#66FFFFFF">
+                    android:textColorHint="#66FFFFFF"
+                    app:helperText="e.g. https://your-app.vercel.app/api"
+                    app:helperTextTextColor="#66FFFFFF">
                     <com.google.android.material.textfield.TextInputEditText
                         android:id="@+id/apiUrlInput"
                         android:layout_width="match_parent"

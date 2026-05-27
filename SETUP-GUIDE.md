@@ -10,8 +10,8 @@ HackTracker is a hackathon device tracking system with two parts:
 
 ## Live Production URLs
 
-- **Dashboard**: https://iqoo-hacktracker-by-reskilll-production.up.railway.app/login
-- **API Base**: https://iqoo-hacktracker-by-reskilll-production.up.railway.app/api
+- **Dashboard**: https://hacktracker.reskilll.com/login
+- **API Base**: https://hacktracker.reskilll.com/api
 - **GitHub**: https://github.com/sam25kat/iQOO-HackTracker-by-Reskilll
 - **APK**: `android/app/build/outputs/apk/debug/app-debug.apk`
 
@@ -32,7 +32,7 @@ HackTracker is a hackathon device tracking system with two parts:
 
 ## PART 1: Dashboard — Creating a Hackathon
 
-1. Open https://iqoo-hacktracker-by-reskilll-production.up.railway.app/login
+1. Open https://hacktracker.reskilll.com/login
 2. Click **"Create Hackathon"** tab
 3. Fill in:
    - **Hackathon ID**: e.g. `iqoo_mumbai_2026` (lowercase, no spaces — this goes on every phone)
@@ -97,7 +97,7 @@ Open HackTracker by Reskill. Fill in the Setup screen:
 
 | Field | What to enter |
 |-------|---------------|
-| **API URL** | `https://iqoo-hacktracker-by-reskilll-production.up.railway.app/api` |
+| **API URL** | `https://hacktracker.reskilll.com/api` |
 | **Hackathon ID** | Same ID you created on the dashboard, e.g. `iqoo_mumbai_2026` |
 | **Team ID** | Unique per phone, e.g. `team_01`, `team_02`, ... `team_30` |
 | **Team Name** | The team's name, e.g. `CodeCrafters` |
@@ -126,7 +126,7 @@ A popup asks to activate **Device Admin** — tap **Activate**. This prevents pa
 ## PART 3: During the Hackathon (Organiser Actions)
 
 ### Live Dashboard
-- URL: https://iqoo-hacktracker-by-reskilll-production.up.railway.app/dashboard/YOUR_HACKATHON_ID
+- URL: https://hacktracker.reskilll.com/dashboard/YOUR_HACKATHON_ID
 - Shows all teams in a grid with live stats
 - Auto-refreshes every 5 seconds
 - Click any team card for detailed view (tap timeline, app usage pie chart, device vitals)

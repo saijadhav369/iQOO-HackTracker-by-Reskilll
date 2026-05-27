@@ -18,7 +18,7 @@ android {
 
     buildTypes {
         debug {
-            buildConfigField("String", "API_BASE_URL", "\"https://iqoo-hacktracker-by-reskilll-production.up.railway.app/api\"")
+            buildConfigField("String", "API_BASE_URL", "\"https://hacktracker.reskilll.com/api\"")
         }
         release {
             isMinifyEnabled = true
@@ -26,7 +26,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            buildConfigField("String", "API_BASE_URL", "\"https://iqoo-hacktracker-by-reskilll-production.up.railway.app/api\"")
+            buildConfigField("String", "API_BASE_URL", "\"https://hacktracker.reskilll.com/api\"")
         }
     }
 

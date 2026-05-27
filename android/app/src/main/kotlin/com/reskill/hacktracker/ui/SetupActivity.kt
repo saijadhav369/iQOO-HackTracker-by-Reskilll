@@ -189,24 +189,45 @@ class SetupActivity : AppCompatActivity() {
     }
 
     /**
-     * If the launching intent carries cfg_* extras AND the device isn't already
-     * tracking, populate the fields and kick off saveAndStart() — the same path
-     * the Save button uses. No-op on a normal launcher tap (no extras) or when
-     * already configured, so it's safe to re-fire.
+     * Pre-fill whatever cfg_* extras the launching intent carries. If all four
+     * required fields (api_url, hackathon_id, team_id, team_name) are present,
+     * also auto-kick saveAndStart() — same as the Save button. This split lets
+     * a provisioning script populate just the boilerplate (api_url, hackathon,
+     * passcode) for pre-event configuration; the organiser then types team_id
+     * and team_name on the phone at handover and taps Save manually.
+     *
+     * No-op on a normal launcher tap (no extras) or when already tracking, so
+     * it's safe to re-fire.
      */
     private fun maybeConfigureFromExtras() {
         if (session.isTracking) return
-        val apiUrl = intent?.getStringExtra("cfg_api_url") ?: return
-        val hackathonId = intent?.getStringExtra("cfg_hackathon_id") ?: return
-        val teamId = intent?.getStringExtra("cfg_team_id") ?: return
-        val teamName = intent?.getStringExtra("cfg_team_name") ?: return
+        val apiUrl = intent?.getStringExtra("cfg_api_url")
+        val hackathonId = intent?.getStringExtra("cfg_hackathon_id")
+        val teamId = intent?.getStringExtra("cfg_team_id")
+        val teamName = intent?.getStringExtra("cfg_team_name")
         val passcode = intent?.getStringExtra("cfg_passcode")
-        apiUrlInput.setText(apiUrl)
-        hackathonIdInput.setText(hackathonId)
-        teamIdInput.setText(teamId)
-        teamNameInput.setText(teamName)
+
+        // Bail if NO extras at all (normal launcher tap).
+        if (apiUrl.isNullOrBlank() && hackathonId.isNullOrBlank()
+            && teamId.isNullOrBlank() && teamName.isNullOrBlank()
+            && passcode.isNullOrBlank()) return
+
+        // Pre-fill any field that was provided. Empty/missing extras leave the
+        // existing input value alone (which may already be populated from
+        // SharedPreferences in onCreate).
+        if (!apiUrl.isNullOrBlank()) apiUrlInput.setText(apiUrl)
+        if (!hackathonId.isNullOrBlank()) hackathonIdInput.setText(hackathonId)
+        if (!teamId.isNullOrBlank()) teamIdInput.setText(teamId)
+        if (!teamName.isNullOrBlank()) teamNameInput.setText(teamName)
         if (!passcode.isNullOrBlank()) passcodeSetInput.setText(passcode)
-        saveAndStart()
+
+        // Auto-start tracking only when the full set of required fields is
+        // present. With --defer-team provisioning the organiser will tap Save
+        // manually after typing team_id + team_name on the phone.
+        if (!apiUrl.isNullOrBlank() && !hackathonId.isNullOrBlank()
+            && !teamId.isNullOrBlank() && !teamName.isNullOrBlank()) {
+            saveAndStart()
+        }
     }
 
     override fun onResume() {
