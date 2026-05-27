@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { createPortal } from "react-dom";
 
 type Light = "red" | "green";
 
@@ -55,6 +56,13 @@ export default function LightToggle({ hackathonId }: { hackathonId: string }) {
     }
   };
 
+  // Portal target. The toggle button sits inside the dashboard header, which
+  // has `backdrop-blur-md` -> creates a CSS containing block, breaking
+  // `position: fixed` for descendants. Portalling the modal to `document.body`
+  // makes `fixed inset-0` viewport-relative again so it centers properly.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
   const target: Light = light === "green" ? "red" : "green";
   const isRed = light === "red";
 
@@ -80,7 +88,7 @@ export default function LightToggle({ hackathonId }: { hackathonId: string }) {
         {isRed ? "RESTRICTED" : "UNRESTRICTED"}
       </button>
 
-      {confirmTo && (
+      {confirmTo && mounted && createPortal(
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-300">
           <div className="w-full max-w-md rounded-3xl border border-black/5 bg-white p-8 shadow-2xl dark:border-white/5 dark:bg-[#0a0a0a] animate-in zoom-in-95 duration-300">
             <h2 className="text-lg font-black uppercase tracking-tight">
@@ -120,7 +128,8 @@ export default function LightToggle({ hackathonId }: { hackathonId: string }) {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </>
   );
