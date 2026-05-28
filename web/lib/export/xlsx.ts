@@ -9,6 +9,7 @@ import ExcelJS from "exceljs";
 import { createHash } from "crypto";
 import type {
   HackathonBundle,
+  LeaderboardBundle,
   ScreenshotPayload,
   TeamBundle,
 } from "@/lib/export/types";
@@ -76,6 +77,8 @@ function writeSummarySheet(ws: ExcelJS.Worksheet, b: TeamBundle) {
     { k: "Hackathon start", v: b.hackathon.startTime },
     { k: "Hackathon end", v: b.hackathon.endTime },
     { k: "Tracking status", v: b.status },
+    { k: "Build score", v: b.buildScore == null ? "" : b.buildScore },
+    { k: "Build rank", v: b.buildRank == null ? "" : b.buildRank },
     { k: "Last heartbeat", v: b.heartbeat?.lastSeen ?? "" },
     { k: "Last clean exit", v: fmtBool(b.heartbeat?.lastCleanExit) },
     {
@@ -105,6 +108,42 @@ function writeSummarySheet(ws: ExcelJS.Worksheet, b: TeamBundle) {
     },
     { k: "Generated at", v: b.generatedAt },
   ]);
+  styleHeader(ws);
+}
+
+function writeMembersSheet(ws: ExcelJS.Worksheet, b: TeamBundle) {
+  ws.columns = [
+    { header: "slot", key: "slot", width: 6 },
+    { header: "memberName", key: "name", width: 22 },
+    { header: "deviceId", key: "dev", width: 24 },
+    { header: "status", key: "st", width: 10 },
+    { header: "lastSeen", key: "ls", width: 22 },
+    { header: "batteryLevel", key: "bat", width: 12 },
+    { header: "taps", key: "taps", width: 10 },
+    { header: "textInputs", key: "tx", width: 12 },
+    { header: "scrolls", key: "sc", width: 10 },
+    { header: "appSwitches", key: "as", width: 12 },
+    { header: "keyboardActiveSec", key: "kb", width: 18 },
+    { header: "officeKitSec", key: "ok", width: 14 },
+    { header: "crashCount", key: "cc", width: 12 },
+  ];
+  for (const m of b.membersDetail) {
+    ws.addRow({
+      slot: m.slot,
+      name: m.memberName,
+      dev: m.deviceId ?? "",
+      st: m.status,
+      ls: m.lastSeen ?? "",
+      bat: fmtNum(m.batteryLevel),
+      taps: m.totals.taps,
+      tx: m.totals.textInputs,
+      sc: m.totals.scrolls,
+      as: m.totals.appSwitches,
+      kb: m.totals.keyboardActiveSeconds,
+      ok: m.totals.officeKitSeconds,
+      cc: m.totals.crashCount,
+    });
+  }
   styleHeader(ws);
 }
 
@@ -338,6 +377,7 @@ function writePerTeamSheets(
 ) {
   const sheets: Array<[string, (ws: ExcelJS.Worksheet) => void]> = [
     [`${prefix}-Summary`, (ws) => writeSummarySheet(ws, bundle)],
+    [`${prefix}-Members`, (ws) => writeMembersSheet(ws, bundle)],
     [`${prefix}-Timeline`, (ws) => writeTimelineSheet(ws, bundle)],
     [`${prefix}-AppUsage`, (ws) => writeAppUsageSheet(ws, bundle)],
     [`${prefix}-Vitals`, (ws) => writeVitalsSheet(ws, bundle)],
@@ -367,6 +407,7 @@ export async function renderTeamXlsx(bundle: TeamBundle): Promise<Buffer> {
 
   const ws = workbook.addWorksheet("Summary");
   writeSummarySheet(ws, bundle);
+  writeMembersSheet(workbook.addWorksheet("Members"), bundle);
   writeTimelineSheet(workbook.addWorksheet("Timeline"), bundle);
   writeAppUsageSheet(workbook.addWorksheet("AppUsage"), bundle);
   writeVitalsSheet(workbook.addWorksheet("DeviceVitals"), bundle);
@@ -507,6 +548,9 @@ export async function renderHackathonXlsx(
   tx.columns = [
     { header: "teamId", key: "id", width: 18 },
     { header: "teamName", key: "name", width: 24 },
+    { header: "buildRank", key: "br", width: 10 },
+    { header: "buildScore", key: "bs", width: 12 },
+    { header: "memberCount", key: "mc", width: 12 },
     { header: "deviceId", key: "dev", width: 24 },
     { header: "status", key: "st", width: 12 },
     { header: "lastHeartbeat", key: "lh", width: 22 },
@@ -528,6 +572,9 @@ export async function renderHackathonXlsx(
     tx.addRow({
       id: b.team.id,
       name: b.team.name,
+      br: b.buildRank ?? "",
+      bs: b.buildScore ?? "",
+      mc: b.membersDetail.length,
       dev: b.team.deviceId ?? "",
       st: b.status,
       lh: b.heartbeat?.lastSeen ?? "",
@@ -552,6 +599,136 @@ export async function renderHackathonXlsx(
   for (const t of bundle.teams) {
     writePerTeamSheets(workbook, `T-${t.team.id}`, t);
   }
+
+  const buf = await workbook.xlsx.writeBuffer();
+  return Buffer.from(buf as ArrayBuffer);
+}
+
+// Leaderboard-only workbook — Rankings + Weights + per-team Members. Skips
+// the heavy per-team sheets.
+export async function renderLeaderboardXlsx(
+  bundle: LeaderboardBundle
+): Promise<Buffer> {
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = "HackTracker";
+  workbook.created = new Date();
+  workbook.modified = workbook.created;
+  workbook.title = `HackTracker Leaderboard — ${bundle.hackathon.name}`;
+
+  // Hackathon header
+  const hk = workbook.addWorksheet("Hackathon");
+  hk.columns = [
+    { header: "Field", key: "k", width: 24 },
+    { header: "Value", key: "v", width: 70 },
+  ];
+  hk.addRows([
+    { k: "Hackathon ID", v: bundle.hackathon.id },
+    { k: "Name", v: bundle.hackathon.name },
+    { k: "Status", v: bundle.hackathon.status },
+    { k: "Start", v: bundle.hackathon.startTime },
+    { k: "End", v: bundle.hackathon.endTime },
+    { k: "Venue light", v: bundle.hackathon.currentLight },
+    { k: "Teams", v: bundle.teams.length },
+    { k: "Generated at", v: bundle.generatedAt },
+  ]);
+  styleHeader(hk);
+
+  // Rankings — same shape as the full hackathon export's Leaderboard sheet.
+  const lb = workbook.addWorksheet("Rankings");
+  const lbCols: Array<{ header: string; key: string; width: number }> = [
+    { header: "rank", key: "rank", width: 6 },
+    { header: "teamId", key: "tid", width: 16 },
+    { header: "teamName", key: "tname", width: 24 },
+    { header: "buildScore", key: "bs", width: 12 },
+    { header: "buildScoreRaw", key: "bsr", width: 14 },
+    { header: "mostActive", key: "ma", width: 12 },
+    { header: "mostOfficeKit", key: "mok", width: 14 },
+    { header: "mostResilient", key: "mr", width: 14 },
+  ];
+  for (const c of CONTRIBUTORS) {
+    lbCols.push(
+      { header: `${c}_raw`, key: `${c}_raw`, width: 14 },
+      { header: `${c}_norm`, key: `${c}_norm`, width: 14 },
+      { header: `${c}_contrib`, key: `${c}_contrib`, width: 14 }
+    );
+  }
+  lb.columns = lbCols;
+  for (const r of bundle.rankings) {
+    const row: Record<string, unknown> = {
+      rank: r.rank,
+      tid: r.teamId,
+      tname: r.teamName,
+      bs: r.buildScore,
+      bsr: r.buildScoreRaw,
+      ma: r.mostActive,
+      mok: r.mostOfficeKit,
+      mr: r.mostResilient,
+    };
+    for (const c of CONTRIBUTORS) {
+      row[`${c}_raw`] = r.breakdown[c].raw;
+      row[`${c}_norm`] = r.breakdown[c].normalized ?? "";
+      row[`${c}_contrib`] = r.breakdown[c].contribution;
+    }
+    lb.addRow(row);
+  }
+  styleHeader(lb);
+
+  // Weights
+  const w = workbook.addWorksheet("Weights");
+  w.columns = [
+    { header: "contributor", key: "c", width: 28 },
+    { header: "label", key: "l", width: 34 },
+    { header: "weight", key: "v", width: 10 },
+  ];
+  for (const c of CONTRIBUTORS) {
+    w.addRow({ c, l: CONTRIBUTOR_LABELS[c], v: bundle.weights[c] });
+  }
+  styleHeader(w);
+
+  // One flat Members sheet — every team's members in rank order, easy to
+  // pivot in Excel.
+  const members = workbook.addWorksheet("Members");
+  members.columns = [
+    { header: "rank", key: "rank", width: 6 },
+    { header: "teamId", key: "tid", width: 16 },
+    { header: "teamName", key: "tname", width: 22 },
+    { header: "slot", key: "slot", width: 6 },
+    { header: "memberName", key: "name", width: 22 },
+    { header: "deviceId", key: "dev", width: 24 },
+    { header: "status", key: "st", width: 10 },
+    { header: "lastSeen", key: "ls", width: 22 },
+    { header: "batteryLevel", key: "bat", width: 12 },
+    { header: "taps", key: "taps", width: 10 },
+    { header: "textInputs", key: "tx", width: 12 },
+    { header: "scrolls", key: "sc", width: 10 },
+    { header: "appSwitches", key: "as", width: 12 },
+    { header: "keyboardActiveSec", key: "kb", width: 18 },
+    { header: "officeKitSec", key: "ok", width: 14 },
+    { header: "crashCount", key: "cc", width: 12 },
+  ];
+  for (const t of bundle.teams) {
+    for (const m of t.membersDetail) {
+      members.addRow({
+        rank: t.rank,
+        tid: t.teamId,
+        tname: t.teamName,
+        slot: m.slot,
+        name: m.memberName,
+        dev: m.deviceId ?? "",
+        st: m.status,
+        ls: m.lastSeen ?? "",
+        bat: fmtNum(m.batteryLevel),
+        taps: m.totals.taps,
+        tx: m.totals.textInputs,
+        sc: m.totals.scrolls,
+        as: m.totals.appSwitches,
+        kb: m.totals.keyboardActiveSeconds,
+        ok: m.totals.officeKitSeconds,
+        cc: m.totals.crashCount,
+      });
+    }
+  }
+  styleHeader(members);
 
   const buf = await workbook.xlsx.writeBuffer();
   return Buffer.from(buf as ArrayBuffer);

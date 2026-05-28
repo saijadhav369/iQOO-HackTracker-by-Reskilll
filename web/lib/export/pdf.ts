@@ -11,8 +11,10 @@ import { readFileSync } from "fs";
 import path from "path";
 import type {
   HackathonBundle,
+  LeaderboardBundle,
   ScreenshotPayload,
   TeamBundle,
+  TeamMemberDetail,
   CrashRow,
   TamperRow,
   TimelineRow,
@@ -193,6 +195,12 @@ function teamCover(doc: Doc, bundle: TeamBundle) {
   muted(doc, `Team ID: ${bundle.team.id}`);
   doc.moveDown(0.5);
 
+  const scoreCell =
+    bundle.buildScore != null
+      ? `${bundle.buildScore.toFixed(3)}${
+          bundle.buildRank != null ? `  (rank #${bundle.buildRank})` : ""
+        }`
+      : "—";
   kvGrid(doc, [
     ["Hackathon", `${bundle.hackathon.name} (${bundle.hackathon.id})`],
     [
@@ -201,7 +209,8 @@ function teamCover(doc: Doc, bundle: TeamBundle) {
     ],
     ["Hackathon status", bundle.hackathon.status],
     ["Venue light", bundle.hackathon.currentLight],
-    ["Device ID", bundle.team.deviceId ?? "—"],
+    ["Build score", scoreCell],
+    ["Device ID (primary)", bundle.team.deviceId ?? "—"],
     ["Members", bundle.team.members?.map((m) => m.name).join(", ") ?? "—"],
     ["Tracking status", bundle.status],
     ["Last heartbeat", fmtTime(bundle.heartbeat?.lastSeen ?? null)],
@@ -242,7 +251,16 @@ function hackathonCover(doc: Doc, bundle: HackathonBundle) {
 
 function totalsStrip(doc: Doc, b: TeamBundle) {
   h2(doc, "Totals");
-  kvGrid(doc, [
+  const rows: Array<[string, string]> = [];
+  if (b.buildScore != null) {
+    rows.push([
+      "Build score",
+      `${b.buildScore.toFixed(3)}${
+        b.buildRank != null ? `  (rank #${b.buildRank})` : ""
+      }`,
+    ]);
+  }
+  rows.push(
     ["Taps", b.totals.taps.toLocaleString()],
     ["Text inputs", b.totals.textInputs.toLocaleString()],
     ["Scrolls", b.totals.scrolls.toLocaleString()],
@@ -256,11 +274,67 @@ function totalsStrip(doc: Doc, b: TeamBundle) {
     ["Clipboard events", b.totals.clipboardEvents.toString()],
     ["Crashes", b.totals.crashCount.toString()],
     ["Tamper events", b.totals.tamperCount.toString()],
+    ["Longest session", `${b.totals.longestSessionMinutes} min`]
+  );
+  kvGrid(doc, rows);
+}
+
+function membersTable(doc: Doc, members: TeamMemberDetail[]) {
+  h2(doc, `Members (${members.length})`);
+  if (members.length === 0) {
+    muted(doc, "(no members registered)");
+    return;
+  }
+  table(
+    doc,
     [
-      "Longest session",
-      `${b.totals.longestSessionMinutes} min`,
+      { label: "Slot", width: 30, get: (m: TeamMemberDetail) => `#${m.slot}` },
+      { label: "Name", width: 110, get: (m: TeamMemberDetail) => m.memberName },
+      {
+        label: "Status",
+        width: 50,
+        get: (m: TeamMemberDetail) => m.status,
+      },
+      {
+        label: "Last seen",
+        width: 100,
+        get: (m: TeamMemberDetail) => shortTime(m.lastSeen),
+      },
+      {
+        label: "Batt%",
+        width: 40,
+        get: (m: TeamMemberDetail) => fmtNum(m.batteryLevel),
+      },
+      {
+        label: "Taps",
+        width: 45,
+        get: (m: TeamMemberDetail) => m.totals.taps.toLocaleString(),
+      },
+      {
+        label: "Text",
+        width: 40,
+        get: (m: TeamMemberDetail) => m.totals.textInputs.toLocaleString(),
+      },
+      {
+        label: "Kbd s",
+        width: 40,
+        get: (m: TeamMemberDetail) =>
+          m.totals.keyboardActiveSeconds.toLocaleString(),
+      },
+      {
+        label: "OfficeKit s",
+        width: 55,
+        get: (m: TeamMemberDetail) =>
+          m.totals.officeKitSeconds.toLocaleString(),
+      },
+      {
+        label: "Crash",
+        width: 35,
+        get: (m: TeamMemberDetail) => m.totals.crashCount.toString(),
+      },
     ],
-  ]);
+    members
+  );
 }
 
 function timelineTable(doc: Doc, rows: TimelineRow[]) {
@@ -428,6 +502,7 @@ function teamSection(doc: Doc, bundle: TeamBundle, { newPage }: { newPage: boole
   if (newPage) doc.addPage();
   h1(doc, `Team — ${bundle.team.name}`);
   totalsStrip(doc, bundle);
+  membersTable(doc, bundle.membersDetail);
   timelineTable(doc, bundle.timeline);
   appUsageTable(doc, bundle.appUsage);
   vitalsTable(doc, bundle.vitals);
@@ -527,6 +602,102 @@ export function renderHackathonPdf(bundle: HackathonBundle): NodeJS.ReadableStre
   // Per-team chapters
   for (const t of bundle.teams) {
     teamSection(doc, t, { newPage: true });
+  }
+
+  doc.end();
+  return doc as unknown as NodeJS.ReadableStream;
+}
+
+// Leaderboard-only PDF — cover + rankings + scoring weights + per-team
+// members. Skips the heavy timeline/vitals/screenshot chapters. Used when
+// the organiser wants a concise printable scoreboard rather than the full
+// hackathon dump.
+export function renderLeaderboardPdf(
+  bundle: LeaderboardBundle
+): NodeJS.ReadableStream {
+  const doc = new PDFDocument({
+    size: "A4",
+    margin: MARGIN,
+    info: {
+      Title: `HackTracker Leaderboard — ${bundle.hackathon.name}`,
+      Author: "HackTracker",
+    },
+  });
+
+  // Cover
+  if (LOGO_BYTES) {
+    try {
+      doc.image(LOGO_BYTES, MARGIN, MARGIN, { width: 56 });
+    } catch {}
+  }
+  doc.y = MARGIN + 70;
+  doc.font("Helvetica-Bold").fontSize(28).fillColor("#000").text("HackTracker");
+  doc.font("Helvetica").fontSize(14).fillColor("#666").text("Leaderboard");
+  doc.moveDown(1);
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(20)
+    .fillColor("#000")
+    .text(bundle.hackathon.name);
+  muted(doc, `Hackathon ID: ${bundle.hackathon.id}`);
+  doc.moveDown(0.5);
+  kvGrid(doc, [
+    [
+      "Window",
+      `${fmtTime(bundle.hackathon.startTime)}  →  ${fmtTime(bundle.hackathon.endTime)}`,
+    ],
+    ["Status", bundle.hackathon.status],
+    ["Venue light", bundle.hackathon.currentLight],
+    ["Teams", bundle.teams.length.toString()],
+    ["Generated at", fmtTime(bundle.generatedAt)],
+  ]);
+
+  // Rankings
+  doc.addPage();
+  h1(doc, "Rankings");
+  table(
+    doc,
+    [
+      { label: "Rank", width: 40, get: (r) => `#${r.rank}` },
+      { label: "Team", width: 200, get: (r) => r.teamName },
+      { label: "Build Score", width: 80, get: (r) => r.buildScore.toFixed(3) },
+      { label: "Most Active", width: 70, get: (r) => r.mostActive.toLocaleString() },
+      { label: "Office Kit", width: 60, get: (r) => `${Math.round(r.mostOfficeKit)} m` },
+      {
+        label: "Demerits",
+        width: 60,
+        get: (r) =>
+          (r.breakdown.crashCount.raw + r.breakdown.idleWarningCount.raw).toString(),
+      },
+    ],
+    bundle.rankings
+  );
+
+  // Scoring weights
+  h2(doc, "Scoring Weights");
+  kvGrid(
+    doc,
+    CONTRIBUTORS.map((c) => [CONTRIBUTOR_LABELS[c], bundle.weights[c].toFixed(2)])
+  );
+
+  // Per-team members
+  for (const t of bundle.teams) {
+    doc.addPage();
+    h1(doc, `#${t.rank} — ${t.teamName}`);
+    kvGrid(doc, [
+      ["Build score", t.buildScore.toFixed(3)],
+      ["Tracking status", t.status],
+      ["Primary device", t.deviceId ?? "—"],
+      ["Total taps", t.totals.taps.toLocaleString()],
+      ["Total text inputs", t.totals.textInputs.toLocaleString()],
+      [
+        "Keyboard active",
+        `${t.totals.keyboardActiveSeconds.toLocaleString()} s`,
+      ],
+      ["Office Kit", `${t.totals.officeKitSeconds.toLocaleString()} s`],
+      ["Crashes", t.totals.crashCount.toString()],
+    ]);
+    membersTable(doc, t.membersDetail);
   }
 
   doc.end();

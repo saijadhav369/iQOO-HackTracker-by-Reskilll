@@ -286,6 +286,8 @@ class SetupActivity : AppCompatActivity() {
         if (host.isBlank()) return false
         if (host == "localhost") return true
         if (host.startsWith("127.")) return true
+        // 10.x covers Android Emulator's host-loopback alias (10.0.2.2) too,
+        // along with normal LAN dev servers.
         if (host.startsWith("10.")) return true
         if (host.startsWith("192.168.")) return true
         // 172.16.0.0 – 172.31.255.255

@@ -29,6 +29,7 @@ import com.reskill.hacktracker.data.repository.TrackingRepository
 import com.reskill.hacktracker.receivers.PackageChangeReceiver
 import com.reskill.hacktracker.receivers.ShutdownReceiver
 import com.reskill.hacktracker.ui.LightStateOverlay
+import com.reskill.hacktracker.ui.PasscodeActivity
 import com.reskill.hacktracker.ui.SetupActivity
 import com.reskill.hacktracker.util.Constants
 import com.reskill.hacktracker.util.DeviceOwnerPolicy
@@ -49,6 +50,7 @@ class TrackingForegroundService : Service() {
     private var shutdownReceiver: ShutdownReceiver? = null
     private var packageChangeReceiver: PackageChangeReceiver? = null
     private var adbObserver: ContentObserver? = null
+    private var accessibilityObserver: ContentObserver? = null
 
     // Feature 10 time-drift detection. Snapshots from the previous 60s sync tick:
     // a clean clock advances wall-clock and monotonic time by the same delta.
@@ -89,6 +91,7 @@ class TrackingForegroundService : Service() {
         registerShutdownReceiver()
         registerPackageChangeReceiver()
         registerAdbObserver()
+        registerAccessibilityObserver()
     }
 
     // PACKAGE_ADDED/REMOVED can't be received by a manifest receiver on API 26+,
@@ -107,6 +110,133 @@ class TrackingForegroundService : Service() {
             registerReceiver(receiver, filter)
         }
         packageChangeReceiver = receiver
+    }
+
+    /**
+     * Watch [Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES] from the foreground-
+     * service process — which keeps running even after our a11y service itself
+     * is disabled. The instant our component disappears from that list, fire
+     * the passcode lock AND log a tamper event. This is the active-admin-mode
+     * equivalent of `setPermittedAccessibilityServices` (which only device-owner
+     * can call) — we can't *prevent* the toggle, but we can react in real time.
+     *
+     * On device-owner installs this is a belt-and-braces backup for the
+     * permitted-services restriction; on active-admin installs it's the only
+     * defense against the "turn off our a11y service then uninstall" attack.
+     */
+    private fun registerAccessibilityObserver() {
+        val uri = Settings.Secure.getUriFor(Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
+            ?: return
+        val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean) {
+                val enabled = try {
+                    Settings.Secure.getString(
+                        contentResolver,
+                        Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+                    ) ?: ""
+                } catch (_: Exception) { "" }
+                val ours = packageName
+                if (enabled.contains(ours)) return
+
+                android.util.Log.w(
+                    "HackTracker",
+                    "Accessibility service was disabled. enabled=$enabled. Self-healing + firing passcode."
+                )
+
+                // Step 1 — self-heal. With WRITE_SECURE_SETTINGS granted via
+                // ADB at provisioning time, write our component back into the
+                // enabled list. The OS re-binds the service on the next event
+                // loop tick, so the OFF toggle the user just flipped visibly
+                // pops back ON in Settings. Without device-owner this is the
+                // strongest defense we have.
+                tryRestoreAccessibilityService(enabled)
+
+                // Step 2 — sticky passcode lock over whatever screen they're on.
+                try {
+                    val intent = Intent(applicationContext, PasscodeActivity::class.java).apply {
+                        addFlags(
+                            Intent.FLAG_ACTIVITY_NEW_TASK or
+                                Intent.FLAG_ACTIVITY_CLEAR_TOP
+                        )
+                        putExtra("source", "tamper_detection")
+                    }
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    android.util.Log.w("HackTracker", "PasscodeActivity launch failed", e)
+                }
+
+                // Step 3 — log so the dashboard sees the attempt.
+                scope.launch {
+                    try {
+                        repository.logTamperEvent(
+                            Constants.TAMPER_ACCESSIBILITY_DISABLED,
+                            mapOf("enabled_value" to enabled)
+                        )
+                    } catch (_: Exception) {}
+                }
+
+                // Step 4 — on device-owner installs, re-apply the full
+                // lockdown (no-op on active-admin).
+                try {
+                    DeviceOwnerPolicy.applyTamperLockdown(applicationContext)
+                } catch (_: Exception) {}
+            }
+        }
+        try {
+            contentResolver.registerContentObserver(uri, false, observer)
+            accessibilityObserver = observer
+        } catch (_: Exception) {}
+    }
+
+    /**
+     * Add our accessibility service back to ENABLED_ACCESSIBILITY_SERVICES.
+     * Requires WRITE_SECURE_SETTINGS, granted via ADB at provisioning time
+     * (`pm grant <pkg> android.permission.WRITE_SECURE_SETTINGS`). On a stock
+     * install without that permission this call throws SecurityException —
+     * we swallow it so the passcode + tamper-log path still runs.
+     *
+     * The string format is colon-separated component names. We append our
+     * component if it's not already there. The OS picks up the change on
+     * the next content-observer tick and re-binds the a11y service.
+     */
+    private fun tryRestoreAccessibilityService(currentEnabled: String) {
+        val ourComponent = "$packageName/" +
+            "$packageName.services.HackTrackerAccessibilityService"
+        val newValue = if (currentEnabled.isBlank() || currentEnabled == "null") {
+            ourComponent
+        } else if (currentEnabled.split(':').any { it == ourComponent }) {
+            // Already there — nothing to do (shouldn't reach here, but defensive).
+            return
+        } else {
+            "$currentEnabled:$ourComponent"
+        }
+        try {
+            Settings.Secure.putString(
+                contentResolver,
+                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
+                newValue
+            )
+            // accessibility_enabled is a separate master switch — same flow.
+            Settings.Secure.putInt(
+                contentResolver,
+                Settings.Secure.ACCESSIBILITY_ENABLED,
+                1
+            )
+            android.util.Log.w(
+                "HackTracker",
+                "Self-healed accessibility list -> $newValue"
+            )
+        } catch (e: SecurityException) {
+            // WRITE_SECURE_SETTINGS not granted. Provisioning script grants it
+            // with `pm grant`; if that step was skipped, this path is no-op.
+            android.util.Log.w(
+                "HackTracker",
+                "Self-heal blocked — WRITE_SECURE_SETTINGS not granted. Re-run setup script.",
+                e
+            )
+        } catch (e: Exception) {
+            android.util.Log.w("HackTracker", "Self-heal failed", e)
+        }
     }
 
     // Watch Settings.Global.ADB_ENABLED. A device-owner sets it to 0; any change
@@ -535,6 +665,10 @@ class TrackingForegroundService : Service() {
             try { contentResolver.unregisterContentObserver(it) } catch (_: Exception) {}
         }
         adbObserver = null
+        accessibilityObserver?.let {
+            try { contentResolver.unregisterContentObserver(it) } catch (_: Exception) {}
+        }
+        accessibilityObserver = null
         MediaProjectionHolder.projection?.let {
             try { it.stop() } catch (_: Exception) {}
         }

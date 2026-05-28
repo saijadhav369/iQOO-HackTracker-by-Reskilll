@@ -42,8 +42,12 @@ import { computeLongestSessionMsPerTeam } from "@/lib/sessions";
 import { fetchScreenshotBytes } from "@/lib/export/screenshots";
 import type {
   HackathonBundle,
+  LeaderboardBundle,
+  LeaderboardTeam,
+  MemberTotals,
   ScreenshotPayload,
   TeamBundle,
+  TeamMemberDetail,
   TimelineRow,
   VitalsRow,
   SensorRow,
@@ -242,6 +246,82 @@ function membersFromTable(
     .map((m) => ({ name: `Member ${m.slot}: ${m.memberName}` }));
 }
 
+// Group a team's event-batch rows by device and fold into a flat MemberTotals.
+// Skips rows whose deviceId is null (defensive — every batch should carry one).
+function aggregateMemberTotals(
+  rows: Array<typeof eventBatches.$inferSelect>,
+  crashRows: Array<typeof crashLogs.$inferSelect>
+): Map<string, MemberTotals> {
+  const out = new Map<string, MemberTotals>();
+  const ensure = (dev: string) => {
+    let m = out.get(dev);
+    if (!m) {
+      m = {
+        taps: 0,
+        textInputs: 0,
+        scrolls: 0,
+        appSwitches: 0,
+        keyboardActiveSeconds: 0,
+        officeKitSeconds: 0,
+        crashCount: 0,
+      };
+      out.set(dev, m);
+    }
+    return m;
+  };
+  for (const r of rows) {
+    if (!r.deviceId) continue;
+    const m = ensure(r.deviceId);
+    m.taps += r.taps ?? 0;
+    m.textInputs += r.textInputs ?? 0;
+    m.scrolls += r.scrolls ?? 0;
+    m.appSwitches += r.appSwitches ?? 0;
+    m.keyboardActiveSeconds += r.keyboardActiveSeconds ?? 0;
+    m.officeKitSeconds += r.officeKitSeconds ?? 0;
+  }
+  for (const c of crashRows) {
+    if (!c.deviceId) continue;
+    ensure(c.deviceId).crashCount += 1;
+  }
+  return out;
+}
+
+function emptyMemberTotals(): MemberTotals {
+  return {
+    taps: 0,
+    textInputs: 0,
+    scrolls: 0,
+    appSwitches: 0,
+    keyboardActiveSeconds: 0,
+    officeKitSeconds: 0,
+    crashCount: 0,
+  };
+}
+
+function buildMembersDetail(
+  memberRows: Array<{ slot: number; memberName: string; deviceId: string | null }>,
+  totalsByDevice: Map<string, MemberTotals>,
+  heartbeatsByDevice: Map<string, typeof heartbeats.$inferSelect>,
+  now: number
+): TeamMemberDetail[] {
+  return memberRows
+    .slice()
+    .sort((a, b) => a.slot - b.slot)
+    .map((m) => {
+      const dev = m.deviceId;
+      const hb = dev ? heartbeatsByDevice.get(dev) : undefined;
+      return {
+        slot: m.slot,
+        memberName: m.memberName,
+        deviceId: dev,
+        lastSeen: hb?.lastSeen ? iso(hb.lastSeen) : null,
+        batteryLevel: hb?.batteryLevel ?? null,
+        status: deriveStatus(hb, now),
+        totals: (dev && totalsByDevice.get(dev)) || emptyMemberTotals(),
+      };
+    });
+}
+
 function coerceTargetTeamIds(v: unknown): string[] | null {
   if (!Array.isArray(v)) return null;
   const out: string[] = [];
@@ -275,8 +355,10 @@ async function mapWithConcurrency<T, U>(
 
 interface TeamSlice {
   teamRow: typeof teams.$inferSelect;
-  memberRows: Array<{ slot: number; memberName: string }>;
+  memberRows: Array<{ slot: number; memberName: string; deviceId: string | null }>;
   heartbeat: typeof heartbeats.$inferSelect | undefined;
+  // Latest heartbeat per device (for per-member online/battery in the report).
+  heartbeatsByDevice: Map<string, typeof heartbeats.$inferSelect>;
   timelineRows: Array<typeof eventBatches.$inferSelect>;
   appUsageRows: Array<typeof appUsage.$inferSelect>;
   vitalsRows: Array<typeof deviceVitals.$inferSelect>;
@@ -288,6 +370,8 @@ interface TeamSlice {
   clipboardEventCount: number;
   longestSessionMs: number;
   status: "active" | "idle" | "offline" | "crashed";
+  buildScore: number | null;
+  buildRank: number | null;
 }
 
 function assembleTeamBundle(
@@ -437,6 +521,17 @@ function assembleTeamBundle(
     totals.officeKitSeconds += r.officeKitSeconds ?? 0;
   }
 
+  const memberTotalsByDevice = aggregateMemberTotals(
+    slice.timelineRows,
+    slice.crashRows
+  );
+  const membersDetail = buildMembersDetail(
+    slice.memberRows,
+    memberTotalsByDevice,
+    slice.heartbeatsByDevice,
+    Date.now()
+  );
+
   return {
     generatedAt,
     hackathon: hackathonCtx,
@@ -457,6 +552,9 @@ function assembleTeamBundle(
         }
       : null,
     totals,
+    buildScore: slice.buildScore,
+    buildRank: slice.buildRank,
+    membersDetail,
     timeline,
     appUsage: appUsageOut,
     vitals,
@@ -595,7 +693,11 @@ export async function gatherTeamBundle(teamId: string): Promise<TeamBundle | nul
       .where(eq(deviceVitals.teamId, teamId))
       .orderBy(asc(deviceVitals.recordedAt)),
     db
-      .select({ slot: teamMembers.slot, memberName: teamMembers.memberName })
+      .select({
+        slot: teamMembers.slot,
+        memberName: teamMembers.memberName,
+        deviceId: teamMembers.deviceId,
+      })
       .from(teamMembers)
       .where(eq(teamMembers.teamId, teamId)),
   ]);
@@ -607,8 +709,37 @@ export async function gatherTeamBundle(teamId: string): Promise<TeamBundle | nul
         new Date(b.lastSeen).getTime() - new Date(a.lastSeen).getTime()
     )[0];
 
+  // Latest heartbeat per device (so per-member battery + online dots match
+  // what the dashboard shows). Keyed by deviceId.
+  const heartbeatsByDevice = new Map<string, typeof heartbeatRows[number]>();
+  for (const hb of heartbeatRows) {
+    if (!hb.deviceId) continue;
+    const existing = heartbeatsByDevice.get(hb.deviceId);
+    if (
+      !existing ||
+      (hb.lastSeen && new Date(hb.lastSeen) > new Date(existing.lastSeen))
+    ) {
+      heartbeatsByDevice.set(hb.deviceId, hb);
+    }
+  }
+
   const longestSessionMs =
     computeLongestSessionMsPerTeam(vitalTicks).get(teamId) ?? 0;
+
+  // Build score for a single team requires the full hackathon's metrics
+  // (min-max normalisation). Compute the rankings once and pluck this team.
+  let buildScore: number | null = null;
+  let buildRank: number | null = null;
+  try {
+    const rankings = await computeHackathonRankings(teamRow.hackathonId, hk);
+    const mine = rankings.find((r) => r.teamId === teamId);
+    if (mine) {
+      buildScore = mine.buildScore;
+      buildRank = mine.rank;
+    }
+  } catch {
+    // Non-fatal — leave score null and let the report omit it.
+  }
 
   const screenshots = await buildScreenshotPayloads(screenshotRows);
 
@@ -619,6 +750,7 @@ export async function gatherTeamBundle(teamId: string): Promise<TeamBundle | nul
       teamRow,
       memberRows,
       heartbeat,
+      heartbeatsByDevice,
       timelineRows,
       appUsageRows,
       vitalsRows,
@@ -630,11 +762,115 @@ export async function gatherTeamBundle(teamId: string): Promise<TeamBundle | nul
       clipboardEventCount: clipboardCountRows[0]?.count ?? 0,
       longestSessionMs,
       status: deriveStatus(heartbeat, Date.now()),
+      buildScore,
+      buildRank,
     },
     hackathonCtx,
     generatedAt,
     screenshots
   );
+}
+
+// Shared ranking computation. Duplicated input queries with
+// gatherHackathonBundle below — kept simple here so single-team exports can
+// surface the team's build score without re-running the entire bundle.
+async function computeHackathonRankings(
+  hackathonId: string,
+  hk: typeof hackathons.$inferSelect
+) {
+  const [
+    teamRows,
+    timelineRows,
+    vitalsRows,
+    crashRows,
+    idleWarningRows,
+  ] = await Promise.all([
+    db.select().from(teams).where(eq(teams.hackathonId, hackathonId)),
+    db
+      .select()
+      .from(eventBatches)
+      .where(eq(eventBatches.hackathonId, hackathonId)),
+    db
+      .select()
+      .from(deviceVitals)
+      .where(eq(deviceVitals.hackathonId, hackathonId))
+      .orderBy(
+        asc(deviceVitals.teamId),
+        asc(deviceVitals.deviceId),
+        asc(deviceVitals.recordedAt)
+      ),
+    db.select().from(crashLogs).where(eq(crashLogs.hackathonId, hackathonId)),
+    db
+      .select({
+        teamId: organiserAlerts.teamId,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(organiserAlerts)
+      .where(
+        and(
+          eq(organiserAlerts.hackathonId, hackathonId),
+          eq(organiserAlerts.type, "idle_warning")
+        )
+      )
+      .groupBy(organiserAlerts.teamId),
+  ]);
+
+  const vitalsDerivedByTeam = deriveVitalsPerTeam(
+    vitalsRows.map((v) => ({
+      teamId: v.teamId,
+      deviceId: v.deviceId,
+      recordedAt: v.recordedAt,
+      cpuUsage: v.cpuUsage,
+      batteryLevel: v.batteryLevel,
+      thermalHeadroom: v.thermalHeadroom,
+      thermalStatus: v.thermalStatus,
+      monsterMode: v.monsterMode,
+    }))
+  );
+
+  const teamAgg = new Map<
+    string,
+    { officeKitSec: number; textInputs: number; kbSec: number }
+  >();
+  for (const t of teamRows) {
+    teamAgg.set(t.id, { officeKitSec: 0, textInputs: 0, kbSec: 0 });
+  }
+  for (const r of timelineRows) {
+    const agg = teamAgg.get(r.teamId);
+    if (!agg) continue;
+    agg.officeKitSec += r.officeKitSeconds ?? 0;
+    agg.textInputs += r.textInputs ?? 0;
+    agg.kbSec += r.keyboardActiveSeconds ?? 0;
+  }
+  const crashCountByTeam = new Map<string, number>();
+  for (const c of crashRows) {
+    crashCountByTeam.set(c.teamId, (crashCountByTeam.get(c.teamId) ?? 0) + 1);
+  }
+  const idleWarningMap = new Map(idleWarningRows.map((r) => [r.teamId, r.count]));
+
+  const teamMetrics: TeamRawMetrics[] = teamRows.map((t) => {
+    const agg = teamAgg.get(t.id) ?? { officeKitSec: 0, textInputs: 0, kbSec: 0 };
+    const v = vitalsDerivedByTeam.get(t.id) ?? EMPTY_DERIVED;
+    return {
+      teamId: t.id,
+      teamName: t.name,
+      officeKitMinutes: Math.round(agg.officeKitSec / 60),
+      compileSpikes: v.compileSpikes,
+      typingDensity: agg.textInputs + agg.kbSec,
+      batteryDrainRate: Number(v.batteryDrainRate.toFixed(2)),
+      thermalHeadroom: v.thermalHeadroom,
+      hardwareRedline: v.hardwareRedline,
+      monsterModeMinutes: v.monsterModeMinutes,
+      crashCount: crashCountByTeam.get(t.id) ?? 0,
+      idleWarningCount: idleWarningMap.get(t.id) ?? 0,
+    };
+  });
+
+  const { rankings } = computeBuildScores(
+    teamMetrics,
+    (hk.scoringConfig ?? null) as ScoringConfig | null
+  );
+  return rankings;
 }
 
 // -----------------------------------------------------------------------------
@@ -756,6 +992,7 @@ export async function gatherHackathonBundle(
         teamId: teamMembers.teamId,
         slot: teamMembers.slot,
         memberName: teamMembers.memberName,
+        deviceId: teamMembers.deviceId,
       })
       .from(teamMembers)
       .where(eq(teamMembers.hackathonId, hackathonId)),
@@ -783,10 +1020,13 @@ export async function gatherHackathonBundle(
   const clipboardCountMap = new Map(clipboardCountRows.map((r) => [r.teamId, r.count]));
   const idleWarningMap = new Map(idleWarningRows.map((r) => [r.teamId, r.count]));
 
-  const membersByTeam = new Map<string, Array<{ slot: number; memberName: string }>>();
+  const membersByTeam = new Map<
+    string,
+    Array<{ slot: number; memberName: string; deviceId: string | null }>
+  >();
   for (const m of memberRows) {
     const list = membersByTeam.get(m.teamId) ?? [];
-    list.push({ slot: m.slot, memberName: m.memberName });
+    list.push({ slot: m.slot, memberName: m.memberName, deviceId: m.deviceId });
     membersByTeam.set(m.teamId, list);
   }
 
@@ -799,6 +1039,27 @@ export async function gatherHackathonBundle(
       (h.lastSeen && new Date(h.lastSeen) > new Date(existing.lastSeen))
     ) {
       heartbeatByTeam.set(h.teamId, h);
+    }
+  }
+
+  // Latest heartbeat per (team, device) for per-member battery/online state.
+  const heartbeatsByTeamDevice = new Map<
+    string,
+    Map<string, typeof heartbeatRows[number]>
+  >();
+  for (const h of heartbeatRows) {
+    if (!h.deviceId) continue;
+    let inner = heartbeatsByTeamDevice.get(h.teamId);
+    if (!inner) {
+      inner = new Map();
+      heartbeatsByTeamDevice.set(h.teamId, inner);
+    }
+    const existing = inner.get(h.deviceId);
+    if (
+      !existing ||
+      (h.lastSeen && new Date(h.lastSeen) > new Date(existing.lastSeen))
+    ) {
+      inner.set(h.deviceId, h);
     }
   }
 
@@ -871,13 +1132,18 @@ export async function gatherHackathonBundle(
     screenshotPayloadsByTeam.set(team.id, await buildScreenshotPayloads(rows));
   });
 
+  const rankByTeam = new Map(rankings.map((r) => [r.teamId, r]));
+
   const teamBundles: TeamBundle[] = teamRows.map((teamRow) => {
     const hb = heartbeatByTeam.get(teamRow.id);
+    const ranking = rankByTeam.get(teamRow.id);
     return assembleTeamBundle(
       {
         teamRow,
         memberRows: membersByTeam.get(teamRow.id) ?? [],
         heartbeat: hb,
+        heartbeatsByDevice:
+          heartbeatsByTeamDevice.get(teamRow.id) ?? new Map(),
         timelineRows: timelineByTeam.get(teamRow.id) ?? [],
         appUsageRows: appUsageByTeam.get(teamRow.id) ?? [],
         vitalsRows: vitalsByTeam.get(teamRow.id) ?? [],
@@ -889,6 +1155,8 @@ export async function gatherHackathonBundle(
         clipboardEventCount: clipboardCountMap.get(teamRow.id) ?? 0,
         longestSessionMs: longestSessionByTeam.get(teamRow.id) ?? 0,
         status: deriveStatus(hb, now),
+        buildScore: ranking?.buildScore ?? null,
+        buildRank: ranking?.rank ?? null,
       },
       hackathonCtx,
       generatedAt,
@@ -922,5 +1190,176 @@ export async function gatherHackathonBundle(
     lightTransitions: lightTransitionsOut,
     notifications: notificationsOut,
     teams: teamBundles,
+  };
+}
+
+// -----------------------------------------------------------------------------
+// Leaderboard scope — concise rankings + per-member breakdown. Skips
+// per-team timelines, vitals ticks, app usage, screenshots, etc., so the
+// file stays small and the request finishes in a few seconds even with many
+// teams.
+
+export async function gatherLeaderboardBundle(
+  hackathonId: string
+): Promise<LeaderboardBundle | null> {
+  const [hk] = await db
+    .select()
+    .from(hackathons)
+    .where(eq(hackathons.id, hackathonId))
+    .limit(1);
+  if (!hk) return null;
+
+  const hackathonCtx: BundleHackathon = {
+    id: hk.id,
+    name: hk.name,
+    startTime: iso(hk.startTime),
+    endTime: iso(hk.endTime),
+    currentLight: coerceLight(hk.currentLight),
+    status: hk.status,
+    scoringConfig: hk.scoringConfig,
+  };
+
+  const [teamRows, timelineRows, crashRows, heartbeatRows, memberRows] =
+    await Promise.all([
+      db.select().from(teams).where(eq(teams.hackathonId, hackathonId)),
+      db
+        .select()
+        .from(eventBatches)
+        .where(eq(eventBatches.hackathonId, hackathonId)),
+      db.select().from(crashLogs).where(eq(crashLogs.hackathonId, hackathonId)),
+      db.select().from(heartbeats).where(eq(heartbeats.hackathonId, hackathonId)),
+      db
+        .select({
+          teamId: teamMembers.teamId,
+          slot: teamMembers.slot,
+          memberName: teamMembers.memberName,
+          deviceId: teamMembers.deviceId,
+        })
+        .from(teamMembers)
+        .where(eq(teamMembers.hackathonId, hackathonId)),
+    ]);
+
+  // Rankings — reuse the shared helper so the leaderboard PDF agrees with
+  // both the dashboard and the full hackathon export.
+  const rankings = await computeHackathonRankings(hackathonId, hk);
+  const weights = computeBuildScores(
+    [],
+    (hk.scoringConfig ?? null) as ScoringConfig | null
+  ).weights;
+  const rankByTeam = new Map(rankings.map((r) => [r.teamId, r]));
+
+  // Bucket per team.
+  const timelineByTeam = new Map<string, Array<typeof timelineRows[number]>>();
+  for (const r of timelineRows) {
+    const list = timelineByTeam.get(r.teamId) ?? [];
+    list.push(r);
+    timelineByTeam.set(r.teamId, list);
+  }
+  const crashByTeam = new Map<string, Array<typeof crashRows[number]>>();
+  for (const c of crashRows) {
+    const list = crashByTeam.get(c.teamId) ?? [];
+    list.push(c);
+    crashByTeam.set(c.teamId, list);
+  }
+  const membersByTeam = new Map<
+    string,
+    Array<{ slot: number; memberName: string; deviceId: string | null }>
+  >();
+  for (const m of memberRows) {
+    const list = membersByTeam.get(m.teamId) ?? [];
+    list.push({ slot: m.slot, memberName: m.memberName, deviceId: m.deviceId });
+    membersByTeam.set(m.teamId, list);
+  }
+
+  // Latest heartbeat per (team, device) AND per team.
+  const hbByTeam = new Map<string, typeof heartbeatRows[number]>();
+  const hbByTeamDevice = new Map<
+    string,
+    Map<string, typeof heartbeatRows[number]>
+  >();
+  for (const h of heartbeatRows) {
+    const cur = hbByTeam.get(h.teamId);
+    if (
+      !cur ||
+      (h.lastSeen && new Date(h.lastSeen) > new Date(cur.lastSeen))
+    ) {
+      hbByTeam.set(h.teamId, h);
+    }
+    if (h.deviceId) {
+      let inner = hbByTeamDevice.get(h.teamId);
+      if (!inner) {
+        inner = new Map();
+        hbByTeamDevice.set(h.teamId, inner);
+      }
+      const existing = inner.get(h.deviceId);
+      if (
+        !existing ||
+        (h.lastSeen && new Date(h.lastSeen) > new Date(existing.lastSeen))
+      ) {
+        inner.set(h.deviceId, h);
+      }
+    }
+  }
+
+  const now = Date.now();
+
+  // One pass: pre-rank-ordered team list.
+  const orderedTeamIds = rankings.map((r) => r.teamId);
+  // Append any teams that aren't in rankings (e.g. brand-new with no metrics).
+  for (const t of teamRows) {
+    if (!rankByTeam.has(t.id)) orderedTeamIds.push(t.id);
+  }
+  const teamRowById = new Map(teamRows.map((t) => [t.id, t]));
+
+  const teamsOut: LeaderboardTeam[] = [];
+  for (const teamId of orderedTeamIds) {
+    const t = teamRowById.get(teamId);
+    if (!t) continue;
+    const ranking = rankByTeam.get(teamId);
+    const tl = timelineByTeam.get(teamId) ?? [];
+    const totals = {
+      taps: 0,
+      textInputs: 0,
+      scrolls: 0,
+      appSwitches: 0,
+      keyboardActiveSeconds: 0,
+      officeKitSeconds: 0,
+      crashCount: (crashByTeam.get(teamId) ?? []).length,
+    };
+    for (const r of tl) {
+      totals.taps += r.taps ?? 0;
+      totals.textInputs += r.textInputs ?? 0;
+      totals.scrolls += r.scrolls ?? 0;
+      totals.appSwitches += r.appSwitches ?? 0;
+      totals.keyboardActiveSeconds += r.keyboardActiveSeconds ?? 0;
+      totals.officeKitSeconds += r.officeKitSeconds ?? 0;
+    }
+
+    const memberTotals = aggregateMemberTotals(tl, crashByTeam.get(teamId) ?? []);
+    const membersDetail = buildMembersDetail(
+      membersByTeam.get(teamId) ?? [],
+      memberTotals,
+      hbByTeamDevice.get(teamId) ?? new Map(),
+      now
+    );
+
+    teamsOut.push({
+      teamId,
+      teamName: t.name,
+      deviceId: t.deviceId ?? null,
+      status: deriveStatus(hbByTeam.get(teamId), now),
+      rank: ranking?.rank ?? orderedTeamIds.indexOf(teamId) + 1,
+      buildScore: ranking?.buildScore ?? 0,
+      totals,
+      membersDetail,
+    });
+  }
+
+  return {
+    generatedAt: new Date().toISOString(),
+    hackathon: hackathonCtx,
+    rankings,
+    weights,
+    teams: teamsOut,
   };
 }

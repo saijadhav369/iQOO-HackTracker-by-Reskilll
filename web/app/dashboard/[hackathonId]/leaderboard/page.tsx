@@ -364,7 +364,7 @@ export default function LeaderboardPage() {
               </div>
             </div>
           </div>
-          <ExportButton scope="hackathon" hackathonId={hackathonId} />
+          <ExportButton scope="leaderboard" hackathonId={hackathonId} />
         </div>
       </header>
 

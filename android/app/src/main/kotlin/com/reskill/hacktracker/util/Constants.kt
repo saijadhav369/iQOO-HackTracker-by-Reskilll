@@ -80,6 +80,19 @@ object Constants {
 
     // Feature 10 — hardened tamper detection.
 
+    // Settings-launcher packages we treat as protected. Stock AOSP + the
+    // OriginOS / Funtouch variants we've seen on iQOO and Vivo phones.
+    // Anything not in this list (e.g. third-party launchers) won't trigger
+    // the passcode gate, but a real attacker can't open the system Settings
+    // through them either.
+    val SETTINGS_PACKAGES = setOf(
+        "com.android.settings",
+        "com.iqoo.settings",
+        "com.vivo.settings",
+        "com.bbk.settings",
+        "com.iqoo.secure",
+    )
+
     // tamper_event.type tags. Kept in sync with the dashboard TamperList labels.
     const val TAMPER_SETTINGS_PAGE = "settings_page_open"
     const val TAMPER_ADB_TOGGLED = "adb_toggled"
@@ -87,6 +100,7 @@ object Constants {
     const val TAMPER_SAFE_MODE = "safe_mode_boot"
     const val TAMPER_PACKAGE_ADDED = "package_added"
     const val TAMPER_PACKAGE_REMOVED = "package_removed"
+    const val TAMPER_ACCESSIBILITY_DISABLED = "accessibility_disabled"
 
     // Wall-clock (System.currentTimeMillis) vs monotonic (elapsedRealtime) deltas
     // are compared each batch flush; divergence above this is logged as time_drift.

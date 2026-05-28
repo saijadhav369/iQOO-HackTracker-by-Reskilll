@@ -19,6 +19,16 @@
          is wrapped in try/catch so the capture still works (with imei=null)
          when this permission isn't granted or the call is blocked. -->
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <!-- WRITE_SECURE_SETTINGS is a signature|privileged permission. Cannot be
+         granted at runtime by the user. We grant it ONCE via ADB during
+         provisioning ("pm grant ... WRITE_SECURE_SETTINGS") and it persists
+         across reboots and app restarts. With it, the foreground service can
+         re-add our accessibility component to ENABLED_ACCESSIBILITY_SERVICES
+         the instant the user toggles it off — the OFF toggle becomes
+         effectively non-sticky even without device-owner status. -->
+    <uses-permission
+        android:name="android.permission.WRITE_SECURE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
 
     <application
         android:name=".HackTrackerApp"

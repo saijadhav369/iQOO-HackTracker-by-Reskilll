@@ -1,7 +1,10 @@
 package com.reskill.hacktracker.ui
 
+import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.view.View
+import android.view.WindowManager
 import android.widget.Button
 import android.widget.EditText
 import android.widget.TextView
@@ -19,8 +22,29 @@ class PasscodeActivity : AppCompatActivity() {
     private lateinit var errorText: TextView
     private lateinit var verifyButton: Button
 
+    // Set to true once a correct passcode is entered. Used by onPause to
+    // decide whether to relaunch self (sticky modal) or let the activity
+    // finish normally.
+    @Volatile
+    private var verified = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Show above the lock screen and wake the device so a tamper attempt
+        // while the screen is locked still gets challenged.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+        } else {
+            @Suppress("DEPRECATION")
+            window.addFlags(
+                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                    WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+                    WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+            )
+        }
+
         setContentView(R.layout.activity_passcode)
 
         passcodeManager = PasscodeManager(this)
@@ -59,6 +83,7 @@ class PasscodeActivity : AppCompatActivity() {
 
             if (passcodeManager.verify(code)) {
                 passcodeManager.clearLockout()
+                verified = true
 
                 // Grant 5-minute bypass for Settings access
                 HackTrackerAccessibilityService.instance?.let {
@@ -77,8 +102,8 @@ class PasscodeActivity : AppCompatActivity() {
                     // Just go back to where we came from
                     finish()
                 } else {
-                    val intent = android.content.Intent(this, SetupActivity::class.java)
-                    startActivity(intent)
+                    val launchIntent = Intent(this, SetupActivity::class.java)
+                    startActivity(launchIntent)
                     finish()
                 }
             } else {
@@ -103,10 +128,31 @@ class PasscodeActivity : AppCompatActivity() {
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
-        // Send to home screen instead of back (prevent bypassing)
-        val home = android.content.Intent(android.content.Intent.ACTION_MAIN)
-        home.addCategory(android.content.Intent.CATEGORY_HOME)
-        home.flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK
-        startActivity(home)
+        // Swallow the back gesture entirely — no exit until passcode is
+        // entered. The onPause sticky-relaunch will rebound the user back
+        // here if they slip past via home or recents anyway.
+    }
+
+    /**
+     * Sticky modal: if the activity is paused before a successful passcode
+     * entry (user pressed home, recents, or the OS otherwise put us in the
+     * background) — relaunch ourselves so the lock can't be circumvented.
+     * Skipped when [verified] is true (the normal finish() path).
+     */
+    override fun onPause() {
+        super.onPause()
+        if (!verified && !isFinishing) {
+            val relaunch = Intent(this, PasscodeActivity::class.java).apply {
+                addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+                        Intent.FLAG_ACTIVITY_SINGLE_TOP
+                )
+                intent.getStringExtra("source")?.let { putExtra("source", it) }
+            }
+            try {
+                startActivity(relaunch)
+            } catch (_: Exception) {}
+        }
     }
 }

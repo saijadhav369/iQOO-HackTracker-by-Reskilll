@@ -2,6 +2,26 @@
 // fully-resolved bundle — there is no DB / network access inside renderers.
 import type { ScoredTeam, Weights } from "@/lib/scoring";
 
+export interface MemberTotals {
+  taps: number;
+  textInputs: number;
+  scrolls: number;
+  appSwitches: number;
+  keyboardActiveSeconds: number;
+  officeKitSeconds: number;
+  crashCount: number;
+}
+
+export interface TeamMemberDetail {
+  slot: number;
+  memberName: string;
+  deviceId: string | null;
+  lastSeen: string | null;
+  batteryLevel: number | null;
+  status: "active" | "idle" | "offline" | "crashed";
+  totals: MemberTotals;
+}
+
 export interface ScreenshotPayload {
   id: number;
   requestedAt: string;
@@ -124,6 +144,14 @@ export interface TeamBundle {
     tamperCount: number;
     longestSessionMinutes: number;
   };
+  // Composite team build score from /lib/scoring. Always null on the
+  // standalone team route (single team can't be normalised in isolation);
+  // populated when assembled inside a hackathon bundle so the leaderboard
+  // ranking flows into the per-team PDF/XLSX.
+  buildScore: number | null;
+  buildRank: number | null;
+  // Per-device breakdown of the team's effort. Slot 1 / Slot 2 / etc.
+  membersDetail: TeamMemberDetail[];
   timeline: TimelineRow[];
   appUsage: AppUsageRow[];
   vitals: VitalsRow[];
@@ -159,4 +187,35 @@ export interface HackathonBundle {
   lightTransitions: LightTransitionRow[];
   notifications: NotificationRow[];
   teams: TeamBundle[]; // one per team, screenshot-capped each
+}
+
+// Lightweight bundle backing the leaderboard-only export. Carries every
+// team's ranking + the per-member breakdown but skips heavy per-team
+// sections (timelines, vitals ticks, screenshots) so the file stays small
+// and the renderer fast.
+export interface LeaderboardTeam {
+  teamId: string;
+  teamName: string;
+  deviceId: string | null;
+  status: "active" | "idle" | "offline" | "crashed";
+  rank: number;
+  buildScore: number;
+  totals: {
+    taps: number;
+    textInputs: number;
+    scrolls: number;
+    appSwitches: number;
+    keyboardActiveSeconds: number;
+    officeKitSeconds: number;
+    crashCount: number;
+  };
+  membersDetail: TeamMemberDetail[];
+}
+
+export interface LeaderboardBundle {
+  generatedAt: string;
+  hackathon: BundleHackathon;
+  rankings: ScoredTeam[];
+  weights: Weights;
+  teams: LeaderboardTeam[]; // same order as rankings (rank 1 first)
 }

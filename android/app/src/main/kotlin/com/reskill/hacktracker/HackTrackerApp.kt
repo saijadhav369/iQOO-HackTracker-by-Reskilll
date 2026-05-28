@@ -10,6 +10,7 @@ import com.reskill.hacktracker.data.local.HackTrackerDatabase
 import com.reskill.hacktracker.data.local.entity.TamperEventEntity
 import com.reskill.hacktracker.util.Constants
 import com.reskill.hacktracker.util.CrashHandler
+import com.reskill.hacktracker.util.DeviceOwnerPolicy
 import com.reskill.hacktracker.util.SessionManager
 
 class HackTrackerApp : Application() {
@@ -18,6 +19,10 @@ class HackTrackerApp : Application() {
         CrashHandler.install(this)
         createNotificationChannel()
         detectSafeModeBoot()
+        // Re-apply tamper lockdown on every process start — guarantees the
+        // policies survive reboots, app updates, and force-stops via ADB.
+        // No-op when we aren't device owner.
+        try { DeviceOwnerPolicy.applyTamperLockdown(this) } catch (_: Exception) {}
     }
 
     /**

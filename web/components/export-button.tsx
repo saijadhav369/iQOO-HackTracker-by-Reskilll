@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 
 interface ExportButtonProps {
-  scope: "team" | "hackathon";
+  scope: "team" | "hackathon" | "leaderboard";
   hackathonId: string;
   teamId?: string;
 }
@@ -33,7 +33,9 @@ export default function ExportButton({
   const baseUrl =
     scope === "team"
       ? `/api/team/${teamId}/export`
-      : `/api/hackathon/${hackathonId}/export`;
+      : scope === "leaderboard"
+        ? `/api/hackathon/${hackathonId}/leaderboard-export`
+        : `/api/hackathon/${hackathonId}/export`;
 
   const trigger = (fmt: "pdf" | "xlsx") => {
     setOpen(false);

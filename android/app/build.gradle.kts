@@ -16,9 +16,25 @@ android {
         versionName = "1.0.0"
     }
 
+    // API base URL is the fallback used when no cfg_api_url extra is passed at
+    // provisioning. The setup scripts always pass cfg_api_url, so in normal
+    // operation this default is never consulted. It's only used when:
+    //   - someone taps the launcher icon on a phone that hasn't been
+    //     provisioned through the script (rare), OR
+    //   - the QR-code provisioning bundle is missing cfg_api_url.
+    //
+    // Override at build time (no source edit needed) when the prod API
+    // domain changes:
+    //   ./gradlew assembleDebug -PapiBaseUrl=https://new-host.example.com/api
+    // or via environment variable:
+    //   HACKTRACKER_API_URL=https://new-host.example.com/api ./gradlew assembleDebug
+    val apiBaseUrl: String = (project.findProperty("apiBaseUrl") as String?)
+        ?: System.getenv("HACKTRACKER_API_URL")
+        ?: "https://hacktracker.reskilll.com/api"
+
     buildTypes {
         debug {
-            buildConfigField("String", "API_BASE_URL", "\"https://hacktracker.reskilll.com/api\"")
+            buildConfigField("String", "API_BASE_URL", "\"$apiBaseUrl\"")
         }
         release {
             isMinifyEnabled = true
@@ -26,7 +42,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            buildConfigField("String", "API_BASE_URL", "\"https://hacktracker.reskilll.com/api\"")
+            buildConfigField("String", "API_BASE_URL", "\"$apiBaseUrl\"")
         }
     }
 

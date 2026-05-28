@@ -9,6 +9,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 import com.reskill.hacktracker.data.repository.TrackingRepository
 import com.reskill.hacktracker.ui.PasscodeActivity
 import com.reskill.hacktracker.util.Constants
+import com.reskill.hacktracker.util.DeviceOwnerPolicy
 import com.reskill.hacktracker.util.SessionManager
 import kotlinx.coroutines.*
 import java.util.concurrent.ConcurrentHashMap
@@ -76,6 +77,10 @@ class HackTrackerAccessibilityService : AccessibilityService() {
         super.onServiceConnected()
         periodStartTime = System.currentTimeMillis()
         startBatchTimer()
+        // Whenever the system rebinds us, re-assert tamper lockdown. This
+        // covers the case where someone managed to clear a restriction via
+        // some other admin app — next bind reasserts it.
+        try { DeviceOwnerPolicy.applyTamperLockdown(applicationContext) } catch (_: Exception) {}
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -163,51 +168,35 @@ class HackTrackerAccessibilityService : AccessibilityService() {
                     }
                 }
 
-                // Log all Settings window changes for debugging
-                if (packageName == "com.android.settings") {
+                // Log all Settings window changes for debugging.
+                if (packageName in Constants.SETTINGS_PACKAGES) {
                     Log.w("HackTracker", "SETTINGS window: className=$className pkg=$packageName")
                 }
 
-                // Tamper detection: gate specific dangerous Settings pages
-                // Allow if organiser entered passcode recently (bypass window)
+                // STRICT gate: any Settings page (AOSP + OEM variants) opens
+                // the passcode prompt UNLESS the window is Office Kit, which
+                // some Vivo / iQOO ROMs surface inside the Settings package
+                // namespace. The 5-minute bypass window after a successful
+                // passcode entry skips this so the organiser can move within
+                // Settings without retyping each tap.
                 if (System.currentTimeMillis() >= passcodeBypassUntil &&
-                    packageName == "com.android.settings"
+                    packageName in Constants.SETTINGS_PACKAGES &&
+                    !isOfficeKit
                 ) {
-                    val lowerClass = className.lowercase()
-                    val classMatch = lowerClass.contains("accessibility") ||
-                        lowerClass.contains("subsettings") ||
-                        lowerClass.contains("usageaccess") ||
-                        lowerClass.contains("specialaccess") ||
-                        lowerClass.contains("special_access") ||
-                        lowerClass.contains("installedappdetail") ||
-                        lowerClass.contains("appinfo") ||
-                        lowerClass.contains("deviceadmin") ||
-                        lowerClass.contains("device_admin") ||
-                        lowerClass.contains("manageapplication") ||
-                        lowerClass.contains("notificationaccess")
-
-                    // Heading-text fallback catches OEM-renamed (OriginOS)
-                    // activities whose className no longer contains the keywords
-                    // above — match the visible page heading instead.
-                    val heading = if (!classMatch) findSettingsHeading(event.source) else null
-                    val headingMatch = heading != null &&
-                        Constants.SETTINGS_HEADING_REGEX.containsMatchIn(heading)
-
-                    if (classMatch || headingMatch) {
-                        Log.w("HackTracker", "BLOCKED! className=$className heading=$heading")
-                        showPasscodeChallenge()
-                        scope.launch {
-                            try {
-                                repository.logTamperEvent(
-                                    Constants.TAMPER_SETTINGS_PAGE,
-                                    mapOf(
-                                        "className" to className,
-                                        "heading" to heading,
-                                        "matchedBy" to if (classMatch) "class" else "heading"
-                                    )
+                    val heading = findSettingsHeading(event.source)
+                    Log.w("HackTracker", "BLOCKED settings page: className=$className heading=$heading")
+                    showPasscodeChallenge()
+                    scope.launch {
+                        try {
+                            repository.logTamperEvent(
+                                Constants.TAMPER_SETTINGS_PAGE,
+                                mapOf(
+                                    "className" to className,
+                                    "package" to packageName,
+                                    "heading" to heading,
                                 )
-                            } catch (_: Exception) {}
-                        }
+                            )
+                        } catch (_: Exception) {}
                     }
                 }
             }
